@@ -1,1 +1,336 @@
+// MQL5 Properties
+#property copyright "AI Generated EA"
+#property link      "https://www.mql5.com"
+#property version   "1.00"
+#property strict
+
+// Include necessary headers
+#include <Trade\Trade.mqh>
+
+// User Input Parameters
+input double LotSize          = 0.0;    // Lot size (0.0 = auto calculate: AccountBalance/1000)
+input int    StopLossPoints   = 70000;    // Stop Loss in points
+input int    TakeProfitPoints = 5000;   // Take Profit in points
+input ulong  MagicNumber      = 12345;  // EA Magic Number
+input int    BuyBufferIndex   = 0;      // Indicator buffer index for buy signals
+input int    SellBufferIndex  = 1;      // Indicator buffer index for sell signals
+input string IndicatorFileName= "MACD-2-Cloud-Cross-Arrows"; // Name of the indicator mq5 file (without .mq5)
+input int    SignalBar        = 0;      // Bar to check for signals (1 = closed, 0 = current)
+
+// Global Variables
+CTrade   trade;                          // Trade object
+string   indicatorName;                  // Custom indicator name (set in OnInit)
+int      indicatorHandle;                // Handle for the custom indicator
+double   buySignalBuffer[];              // Array for buy signal data
+double   sellSignalBuffer[];             // Array for sell signal data
+datetime lastSignalBarTime = 0;          // Time of the bar where the last signal was processed
+datetime lastBarOpenTime = 0;            // To check for new bar
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+   // Initialize CTrade object
+   trade.SetExpertMagicNumber(MagicNumber);
+   trade.SetMarginMode(); // Use account's margin mode
+   trade.SetTypeFillingBySymbol(Symbol()); // Auto-detect filling type
+
+   // Set indicator name from input
+   indicatorName = IndicatorFileName;
+   if(StringFind(indicatorName, ".mq5") != -1)
+     {
+      indicatorName = StringSubstr(indicatorName, 0, StringFind(indicatorName, ".mq5"));
+     }
+   
+   // Get indicator handle
+   // Path should be relative to MQL5/Indicators/
+   // If the indicator is in a subfolder, e.g., MQL5/Indicators/Custom/MyIndicator.mq5
+   // then indicatorName should be "Custom\\MyIndicator"
+   indicatorHandle = iCustom(Symbol(), Period(), indicatorName);
+
+   if(indicatorHandle == INVALID_HANDLE)
+     {
+      Alert("Error: Failed to load indicator '", indicatorName, ".mq5'. Error code: ", GetLastError());
+      Print("Error: Failed to load indicator '", indicatorName, ".mq5'. Ensure it is compiled and in the MQL5/Indicators/ folder (or subfolder). Error code: ", GetLastError());
+      return(INIT_FAILED);
+     }
+
+   // Initialize last signal bar time
+   lastSignalBarTime = 0;
+   lastBarOpenTime = 0;
+
+   // Set buffers as series for easy access (index 0 is current bar)
+   ArraySetAsSeries(buySignalBuffer, true);
+   ArraySetAsSeries(sellSignalBuffer, true);
+
+   // Print settings for new parameters
+   Print("Signal Bar Index: ", SignalBar, (SignalBar == 0 ? " (Current Bar)" : (SignalBar == 1 ? " (Previous Bar)" : " (Invalid - Check Settings!)")));
+   
+   Comment("EA Initialized. Indicator: ", indicatorName, ".mq5");
+   Print("PerfectScalp EA Initialized. Monitoring indicator: ", indicatorName, ".mq5");
+   return(INIT_SUCCEEDED);
+  }
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+   // Release indicator handle
+   if(indicatorHandle != INVALID_HANDLE)
+     {
+      IndicatorRelease(indicatorHandle);
+     }
+   Comment("EA Deinitialized. Reason: ", reason);
+   Print("PerfectScalp EA Deinitialized. Reason: ", reason);
+  }
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+  {
+   // Check for new bar to avoid processing multiple times on the same bar
+   datetime currentBarOpenTime = (datetime)SeriesInfoInteger(Symbol(), Period(), SERIES_LASTBAR_DATE);
+   if(currentBarOpenTime <= lastBarOpenTime)
+     {
+      return; // Not a new bar yet
+     }
+   lastBarOpenTime = currentBarOpenTime;
+
+   // --- Indicator Data Copying ---
+   // Copy 3 bars to ensure data for index 0 and 1 is available for SignalBar input
+   // ArraySetAsSeries was called in OnInit, so index 0 is current bar, 1 is previous, etc.
+   if(CopyBuffer(indicatorHandle, BuyBufferIndex, 0, 3, buySignalBuffer) <= 0)
+     {
+      Print("Error copying buy signal buffer. Error: ", GetLastError());
+      return;
+     }
+   if(CopyBuffer(indicatorHandle, SellBufferIndex, 0, 3, sellSignalBuffer) <= 0)
+     {
+      Print("Error copying sell signal buffer. Error: ", GetLastError());
+      return;
+     }
+
+   // --- Signal Detection ---
+   // Determine the effective bar index for signal checking (0 for current, 1 for previous)
+   // Default to 1 (previous closed bar) if SignalBar input is invalid, for safety.
+   int effectiveSignalBar = SignalBar;
+   if(effectiveSignalBar < 0 || effectiveSignalBar > 1)
+     {
+      Print("Warning: Invalid SignalBar input (", SignalBar, "). Defaulting to 1 (previous closed bar).");
+      effectiveSignalBar = 1;
+     }
+   
+   // Indicator arrows typically place a price level or a constant value on the signal bar.
+   // EMPTY_VALUE means no arrow. We also check for non-zero, as some might use 0 for no signal.
+   bool isBuySignal = (buySignalBuffer[effectiveSignalBar] != EMPTY_VALUE && buySignalBuffer[effectiveSignalBar] != 0);
+   bool isSellSignal = (sellSignalBuffer[effectiveSignalBar] != EMPTY_VALUE && sellSignalBuffer[effectiveSignalBar] != 0);
+
+   // Get the time of the signal bar (either current or previous)
+   datetime signalBarOpenTime = iTime(Symbol(), Period(), effectiveSignalBar);
+
+   // Ensure this signal bar hasn't been processed already.
+   // The 'lastBarOpenTime' check ensures one attempt per bar formation.
+   // 'lastSignalBarTime' prevents re-processing the same signal event from that specific bar time.
+   if(signalBarOpenTime <= lastSignalBarTime)
+     {
+      // This bar's signal was already processed, or it's an older bar time than the last signal processed.
+      return; 
+     }
+
+   // --- Logic for handling signals ---
+   if(isBuySignal)
+     {
+      Print("Buy signal detected on bar: ", TimeToString(signalBarOpenTime), " (Bar Index: ", effectiveSignalBar, ")");
+      CloseOppositePosition(ORDER_TYPE_BUY); // Close any sell position
+      if(!CheckIfPositionExists(POSITION_TYPE_BUY)) // Check if a buy position already exists
+        {
+         OpenNewPosition(ORDER_TYPE_BUY);
+        }
+      lastSignalBarTime = signalBarOpenTime; // Mark this bar's signal as processed
+     }
+   else if(isSellSignal)
+     {
+      Print("Sell signal detected on bar: ", TimeToString(signalBarOpenTime), " (Bar Index: ", effectiveSignalBar, ")");
+      CloseOppositePosition(ORDER_TYPE_SELL); // Close any buy position
+      if(!CheckIfPositionExists(POSITION_TYPE_SELL)) // Check if a sell position already exists
+        {
+         OpenNewPosition(ORDER_TYPE_SELL);
+        }
+      lastSignalBarTime = signalBarOpenTime; // Mark this bar's signal as processed
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| Calculate Correct Lot Size                                       |
+//+------------------------------------------------------------------+
+double CalculateCorrectLotSize(double requestedLotSize)
+  {
+   double lots = requestedLotSize;
+   if(lots == 0.0) // If LotSize input is 0.0, calculate based on balance
+     {
+      lots = AccountInfoDouble(ACCOUNT_BALANCE) / 1000.0;
+     }
+
+   double minLot = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_MAX);
+   double lotStep = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_STEP);
+
+   // Normalize lots
+   lots = MathRound(lots / lotStep) * lotStep;
+
+   // Check against min and max lot
+   if(lots < minLot)
+      lots = minLot;
+   if(lots > maxLot)
+      lots = maxLot;
+      
+   // Final check for extremely small balances potentially resulting in 0 after normalization
+   if (lots == 0.0 && minLot > 0.0) // If calculated lots is 0 but minLot is greater
+     lots = minLot;
+
+
+   return(lots);
+  }
+
+//+------------------------------------------------------------------+
+//| Close Opposite Position                                          |
+//| Closes any open position that is opposite to the new signalType. |
+//+------------------------------------------------------------------+
+void CloseOppositePosition(ENUM_ORDER_TYPE newSignalType)
+  {
+   ulong ticketToClose = 0;
+   string existingPositionTypeStr = "";
+   string newSignalTypeStr = (newSignalType == ORDER_TYPE_BUY ? "BUY" : "SELL");
+
+   if(newSignalType == ORDER_TYPE_BUY) // New signal is Buy, look for existing Sell positions
+     {
+      ticketToClose = GetOpenPositionTicket(POSITION_TYPE_SELL);
+      existingPositionTypeStr = "SELL";
+     }
+   else if(newSignalType == ORDER_TYPE_SELL) // New signal is Sell, look for existing Buy positions
+     {
+      ticketToClose = GetOpenPositionTicket(POSITION_TYPE_BUY);
+      existingPositionTypeStr = "BUY";
+     }
+
+   if(ticketToClose > 0) // If a relevant opposite position ticket was found
+     {
+      Print("New ", newSignalTypeStr, " signal received. Closing existing ", existingPositionTypeStr, " position (Ticket: ", ticketToClose, ").");
+      if(!trade.PositionClose(ticketToClose, 3000)) // Close with 3 sec timeout (3000 ms)
+        {
+         Print("Failed to close ", existingPositionTypeStr, " position #", ticketToClose, ". Error: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
+        }
+      else
+        {
+         Print("Successfully closed ", existingPositionTypeStr, " position #", ticketToClose, ".");
+        }
+     }
+  }
+  
+//+------------------------------------------------------------------+
+//| Get Open Position Ticket (Helper)                                |
+//| Returns the ticket of an open position matching type, symbol,    |
+//| and magic number. Returns 0 if not found.                      |
+//+------------------------------------------------------------------+
+ulong GetOpenPositionTicket(ENUM_POSITION_TYPE type)
+  {
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      // PositionGetTicket(i) selects the position at index 'i' AND returns its ticket.
+      // Store this ticket. Using :: to be explicit it's the global MQL5 function.
+      ulong current_ticket = ::PositionGetTicket(i); 
+      
+      // Check if a valid ticket was retrieved (i.e., position was successfully selected)
+      if(current_ticket > 0) 
+        {
+         // Now that the position is selected by ::PositionGetTicket(i),
+         // we can query its properties to see if it's the one we're looking for.
+         if(PositionGetString(POSITION_SYMBOL) == Symbol() && 
+            PositionGetInteger(POSITION_MAGIC) == MagicNumber &&
+            PositionGetInteger(POSITION_TYPE) == type)
+           {
+            return current_ticket; // Return the ticket of the matched position
+           }
+        }
+     }
+   return 0; // No matching position found
+  }
+
+//+------------------------------------------------------------------+
+//| Open New Position                                                |
+//+------------------------------------------------------------------+
+void OpenNewPosition(ENUM_ORDER_TYPE signalType)
+  {
+   double lot = CalculateCorrectLotSize(LotSize);
+   if(lot <= 0)
+     {
+      Print("Invalid lot size calculated: ", lot, ". Cannot open position.");
+      return;
+     }
+
+   double slPrice = 0;
+   double tpPrice = 0;
+   double currentPrice = SymbolInfoDouble(Symbol(), (signalType == ORDER_TYPE_BUY) ? SYMBOL_ASK : SYMBOL_BID);
+   double point = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
+
+   if(signalType == ORDER_TYPE_BUY)
+     {
+      slPrice = currentPrice - StopLossPoints * point;
+      tpPrice = currentPrice + TakeProfitPoints * point;
+      if(StopLossPoints <= 0) slPrice = 0; // No SL if StopLossPoints is 0 or less
+      if(TakeProfitPoints <= 0) tpPrice = 0; // No TP if TakeProfitPoints is 0 or less
+      
+      Print("Attempting to open BUY position. Lot: ", lot, " SL: ", slPrice, " TP: ", tpPrice);
+      if(!trade.Buy(lot, Symbol(), currentPrice, slPrice, tpPrice, "Buy triggered by PerfectScalp"))
+        {
+         Print("Buy order failed. Error: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
+        }
+      else
+        {
+         Print("Buy order placed successfully. Ticket: ", trade.ResultOrder());
+        }
+     }
+   else if(signalType == ORDER_TYPE_SELL)
+     {
+      slPrice = currentPrice + StopLossPoints * point;
+      tpPrice = currentPrice - TakeProfitPoints * point;
+      if(StopLossPoints <= 0) slPrice = 0; // No SL if StopLossPoints is 0 or less
+      if(TakeProfitPoints <= 0) tpPrice = 0; // No TP if TakeProfitPoints is 0 or less
+
+      Print("Attempting to open SELL position. Lot: ", lot, " SL: ", slPrice, " TP: ", tpPrice);
+      if(!trade.Sell(lot, Symbol(), currentPrice, slPrice, tpPrice, "Sell triggered by PerfectScalp"))
+        {
+         Print("Sell order failed. Error: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
+        }
+      else
+        {
+         Print("Sell order placed successfully. Ticket: ", trade.ResultOrder());
+        }
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| Check If Position Exists for current symbol and magic            |
+//+------------------------------------------------------------------+
+bool CheckIfPositionExists(ENUM_POSITION_TYPE positionType)
+  {
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      if(PositionGetTicket(i)) // Selects the position by index
+        {
+         // Check if the symbol, magic number, and type match
+         if(PositionGetString(POSITION_SYMBOL) == Symbol() &&
+            PositionGetInteger(POSITION_MAGIC) == MagicNumber &&
+            PositionGetInteger(POSITION_TYPE) == positionType)
+           {
+            return(true); // Position of the specified type exists
+           }
+        }
+     }
+   return(false); // No such position exists
+  }
+//+------------------------------------------------------------------+
 
