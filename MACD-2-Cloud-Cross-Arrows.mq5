@@ -17,7 +17,7 @@ input uint SignalMACD   = 9;    // Signal SMA Period
 input ENUM_APPLIED_PRICE PriceMACD = PRICE_CLOSE;  // Applied Price
 input color UpArrowColor = clrGreen;  // Up Arrow Color
 input color DnArrowColor = clrRed;    // Down Arrow Color
-input int ArrowSize = 3;              // Arrow Size
+input int ArrowSize = 1;              // Arrow Size
 
 //--- buffers for arrow plotting
 double UpArrowBuffer[];
@@ -27,6 +27,7 @@ double DnArrowBuffer[];
 int MACD_Handle;
 double MACDLine[], SignalLine[];
 int min_rates_total;
+int    ArrowShiftPixels = 10;  // Arrow shift in pixels
 datetime LastCrossTime = 0;
 
 //+------------------------------------------------------------------+
@@ -52,6 +53,10 @@ int OnInit()
    //--- set as series
    ArraySetAsSeries(UpArrowBuffer, true);
    ArraySetAsSeries(DnArrowBuffer, true);
+
+   // Set arrow shifts
+   PlotIndexSetInteger(1, PLOT_ARROW_SHIFT, -ArrowShiftPixels); // Low arrows shift DOWN (below price)
+   PlotIndexSetInteger(0, PLOT_ARROW_SHIFT, ArrowShiftPixels);  // High arrows shift UP (above price)
    
    //--- set plot properties for up arrows
    PlotIndexSetInteger(0, PLOT_DRAW_TYPE, DRAW_ARROW);
@@ -123,12 +128,12 @@ int OnCalculate(const int rates_total,
          
          if(bullishCross && time[i] != LastCrossTime)
          {
-            UpArrowBuffer[i] = low[i] - (10000 * _Point); // Place arrow below the low
+            UpArrowBuffer[i] = low[i]; // Place arrow below the low
             LastCrossTime = time[i];
          }
          else if(bearishCross && time[i] != LastCrossTime)
          {
-            DnArrowBuffer[i] = high[i] + (10000 * _Point); // Place arrow above the high
+            DnArrowBuffer[i] = high[i]; // Place arrow above the high
             LastCrossTime = time[i];
          }
       }
