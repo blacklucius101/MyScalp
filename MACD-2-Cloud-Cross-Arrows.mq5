@@ -18,6 +18,14 @@ input ENUM_APPLIED_PRICE PriceMACD = PRICE_CLOSE;  // Applied Price
 input color UpArrowColor = clrGreen;  // Up Arrow Color
 input color DnArrowColor = clrRed;    // Down Arrow Color
 input int ArrowSize = 1;              // Arrow Size
+/*
+STYLE_SOLID: Solid line.
+STYLE_DOT: Dotted line.
+STYLE_DASH: Dashed line.
+STYLE_DASHDOT: Dash-dot line.
+STYLE_DASHDOTDOT: Dash-dot-dot line.
+*/
+input ENUM_LINE_STYLE LineStyle = STYLE_DOT;
 
 //--- buffers for arrow plotting
 double UpArrowBuffer[];
@@ -29,6 +37,11 @@ double MACDLine[], SignalLine[];
 int min_rates_total;
 int    ArrowShiftPixels = 10;  // Arrow shift in pixels
 datetime LastCrossTime = 0;
+
+//--- state machine variables
+enum MACD_STATE {MACD_ABOVE_SIGNAL, MACD_BELOW_SIGNAL, MACD_UNKNOWN};
+MACD_STATE currentState = MACD_UNKNOWN;
+MACD_STATE previousState = MACD_UNKNOWN;
 
 //+------------------------------------------------------------------+
 //| Custom indicator initialization function                         |
@@ -77,7 +90,11 @@ int OnInit()
    PlotIndexSetDouble(1, PLOT_EMPTY_VALUE, EMPTY_VALUE);
    
    //--- set indicator short name
-   IndicatorSetString(INDICATOR_SHORTNAME, "MACD Cloud Cross Arrows");
+   IndicatorSetString(INDICATOR_SHORTNAME, "MACD Cloud Cross Arrows (State Machine)");
+   
+   //--- initialize state machine
+   currentState = MACD_UNKNOWN;
+   previousState = MACD_UNKNOWN;
    
    return(INIT_SUCCEEDED);
 }
@@ -114,29 +131,55 @@ int OnCalculate(const int rates_total,
    //--- calculate start position
    int limit = (prev_calculated <= 0) ? rates_total - 1 : prev_calculated - 1;
    
-   //--- main loop
+   //--- main loop using state machine approach
    for(int i = limit; i >= 0 && !IsStopped(); i--)
    {
       UpArrowBuffer[i] = EMPTY_VALUE;
       DnArrowBuffer[i] = EMPTY_VALUE;
       
-      //--- detect cross
-      if(i < rates_total - 1) // need at least one previous bar to compare
+      //--- determine current state
+      if(MACDLine[i] > SignalLine[i])
+         currentState = MACD_ABOVE_SIGNAL;
+      else
+         currentState = MACD_BELOW_SIGNAL;
+      
+      //--- detect state change (crossover)
+      if(i < rates_total - 1 && currentState != previousState)
       {
-         bool bullishCross = (MACDLine[i] > SignalLine[i] && MACDLine[i+1] <= SignalLine[i+1]);
-         bool bearishCross = (MACDLine[i] < SignalLine[i] && MACDLine[i+1] >= SignalLine[i+1]);
-         
-         if(bullishCross && time[i] != LastCrossTime)
+         if(currentState == MACD_ABOVE_SIGNAL && previousState == MACD_BELOW_SIGNAL)
          {
-            UpArrowBuffer[i] = low[i]; // Place arrow below the low
-            LastCrossTime = time[i];
+            // Bullish crossover
+            if(time[i] != LastCrossTime)
+            {
+               UpArrowBuffer[i] = low[i];
+               LastCrossTime = time[i];
+               string lineName = "BullishCross_" + IntegerToString(i);
+               ObjectCreate(0, lineName, OBJ_VLINE, 0, time[i], 0);
+               ObjectSetInteger(0, lineName, OBJPROP_COLOR, UpArrowColor);
+               ObjectSetInteger(0, lineName, OBJPROP_RAY_RIGHT, true);
+               ObjectSetInteger(0, lineName, OBJPROP_WIDTH, 1);
+               ObjectSetInteger(0, lineName, OBJPROP_STYLE, LineStyle);
+            }
          }
-         else if(bearishCross && time[i] != LastCrossTime)
+         else if(currentState == MACD_BELOW_SIGNAL && previousState == MACD_ABOVE_SIGNAL)
          {
-            DnArrowBuffer[i] = high[i]; // Place arrow above the high
-            LastCrossTime = time[i];
+            // Bearish crossover
+            if(time[i] != LastCrossTime)
+            {
+               DnArrowBuffer[i] = high[i];
+               LastCrossTime = time[i];
+               string lineName = "BearishCross_" + IntegerToString(i);
+               ObjectCreate(0, lineName, OBJ_VLINE, 0, time[i], 0);
+               ObjectSetInteger(0, lineName, OBJPROP_COLOR, DnArrowColor);
+               ObjectSetInteger(0, lineName, OBJPROP_RAY_RIGHT, true);
+               ObjectSetInteger(0, lineName, OBJPROP_WIDTH, 1);
+               ObjectSetInteger(0, lineName, OBJPROP_STYLE, LineStyle);
+            }
          }
       }
+      
+      //--- update previous state for next iteration
+      previousState = currentState;
    }
    
    return(rates_total);
@@ -147,5 +190,23 @@ int OnCalculate(const int rates_total,
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   Comment("");
+    // Get the total number of objects on the current chart
+    int totalObjects = ObjectsTotal(0);
+    
+    // Loop through all objects on the chart and delete those created by the indicator
+    for(int i = totalObjects - 1; i >= 0; i--)
+    {
+        // Get the name of the object at index i
+        string objectName = ObjectName(0, i, 0, 0);
+        
+        // Check if the object name starts with "BullishCross_" or "BearishCross_"
+        if(StringFind(objectName, "BullishCross_") == 0 || StringFind(objectName, "BearishCross_") == 0)
+        {
+            // Delete the object
+            ObjectDelete(0, objectName);
+        }
+    }
+    
+    // Optionally, clear the comment field
+    Comment("");
 }
