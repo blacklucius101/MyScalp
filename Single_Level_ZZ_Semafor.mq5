@@ -29,9 +29,9 @@
 //+----------------------------------------------+
 //|  Indicator input parameters                  |
 //+----------------------------------------------+
-input int    Period1 = 5;        // Depth
+input int    Period1 = 3;        // Depth
 input int    Deviation1 = 1;     // Deviation (points)
-input int    Backstep1 = 3;      // Back Step
+input int    Backstep1 = 2;      // Back Step
 input int    HighSymbol1 = 159;  // High arrow symbol
 input int    LowSymbol1 = 159;   // Low arrow symbol
 input bool   EnableAlerts = true;// Enable Sound Alerts
@@ -43,6 +43,7 @@ double HighBuffer1[];         // High extremes buffer
 double LowBuffer1[];          // Low extremes buffer
 double HighMapBuffer[];       // Calculation buffer for highs
 double LowMapBuffer[];        // Calculation buffer for lows
+int    ArrowShiftPixels = 10;  // Arrow shift in pixels
 
 //+----------------------------------------------+
 //|  Global variables for alert management       |
@@ -60,6 +61,10 @@ void OnInit()
    SetIndexBuffer(1, HighBuffer1, INDICATOR_DATA);
    SetIndexBuffer(2, HighMapBuffer, INDICATOR_CALCULATIONS);
    SetIndexBuffer(3, LowMapBuffer, INDICATOR_CALCULATIONS);
+
+   // Set arrow shifts (new additions)
+   PlotIndexSetInteger(1, PLOT_ARROW_SHIFT, -ArrowShiftPixels); // Low arrows shift DOWN (below price)
+   PlotIndexSetInteger(0, PLOT_ARROW_SHIFT, ArrowShiftPixels);  // High arrows shift UP (above price)
    
    // Set drawing properties for lows
    PlotIndexSetInteger(0, PLOT_DRAW_BEGIN, Period1);
