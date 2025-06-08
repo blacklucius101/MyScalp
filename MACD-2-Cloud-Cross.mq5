@@ -1,11 +1,10 @@
 //+------------------------------------------------------------------+
-//|                                    MACD-2-Cloud-Cross-Arrows.mq5 |
+//|                                        MACD-2-Cloud-Cross-Arrows |
 //|                                                      @mobilebass |
 //|                                             https://www.mql5.com |
 //+------------------------------------------------------------------+
-#property description "Plots arrows on main chart when MACD cloud changes color (MACD crosses Signal)"
 #property indicator_chart_window
-#property indicator_buffers 2
+#property indicator_buffers 3
 #property indicator_plots   2
 
 //+-----------------------------------+
@@ -30,12 +29,13 @@ input ENUM_LINE_STYLE LineStyle = STYLE_DOT;
 //--- buffers for arrow plotting
 double UpArrowBuffer[];
 double DnArrowBuffer[];
+double CrossoverStateBuffer[];
 
 //--- handles and variables
 int MACD_Handle;
 double MACDLine[], SignalLine[];
 int min_rates_total;
-int    ArrowShiftPixels = 10;  // Arrow shift in pixels
+int ArrowShiftPixels = 10;  // Arrow shift in pixels
 datetime LastCrossTime = 0;
 
 //--- state machine variables
@@ -62,10 +62,12 @@ int OnInit()
    //--- set arrow buffers
    SetIndexBuffer(0, UpArrowBuffer, INDICATOR_DATA);
    SetIndexBuffer(1, DnArrowBuffer, INDICATOR_DATA);
+   SetIndexBuffer(2, CrossoverStateBuffer, INDICATOR_DATA);  // Set the crossover state buffer
    
    //--- set as series
    ArraySetAsSeries(UpArrowBuffer, true);
    ArraySetAsSeries(DnArrowBuffer, true);
+   ArraySetAsSeries(CrossoverStateBuffer, true);  // Set the crossover state buffer as series
 
    // Set arrow shifts
    PlotIndexSetInteger(1, PLOT_ARROW_SHIFT, -ArrowShiftPixels); // Low arrows shift DOWN (below price)
@@ -136,6 +138,7 @@ int OnCalculate(const int rates_total,
    {
       UpArrowBuffer[i] = EMPTY_VALUE;
       DnArrowBuffer[i] = EMPTY_VALUE;
+      CrossoverStateBuffer[i] = 0;  // Set to 0 by default (no crossover)
       
       //--- determine current state
       if(MACDLine[i] > SignalLine[i])
@@ -152,6 +155,7 @@ int OnCalculate(const int rates_total,
             if(time[i] != LastCrossTime)
             {
                UpArrowBuffer[i] = low[i];
+               CrossoverStateBuffer[i] = 1;  // Store bullish crossover state
                LastCrossTime = time[i];
                string lineName = "BullishCross_" + IntegerToString(i);
                ObjectCreate(0, lineName, OBJ_VLINE, 0, time[i], 0);
@@ -167,6 +171,7 @@ int OnCalculate(const int rates_total,
             if(time[i] != LastCrossTime)
             {
                DnArrowBuffer[i] = high[i];
+               CrossoverStateBuffer[i] = -1;  // Store bearish crossover state
                LastCrossTime = time[i];
                string lineName = "BearishCross_" + IntegerToString(i);
                ObjectCreate(0, lineName, OBJ_VLINE, 0, time[i], 0);
