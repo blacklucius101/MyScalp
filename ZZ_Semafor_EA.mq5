@@ -14,13 +14,13 @@
 #include <Trade/PositionInfo.mqh>
 
 // Input parameters
-input double   Threshold = 50.0;       // Threshold percentage (0-100)
-input int      TakeProfit = 3000;      // Take profit in points
+input double   Threshold = 61.8;       // Threshold percentage (0-100)
+input int      TakeProfit = 5000;      // Take profit in points
 input int      StopLoss = 70000;       // Stop loss in points
-input double   LotSize = 0.01;         // Fixed lot size (0 for auto)
+input double   LotSize = 0.0;         // Fixed lot size (0 for auto)
 input int      MagicNumber = 123456;   // EA identifier
 input bool     EnableAlerts = false;   // Enable popup alerts
-input bool     UseWeakSignals = false; // false=only strong signals, true=both strong and weak
+input int      MaxOpenTradesType = 1;  // Maximum concurrent trades of the same type (0 for no limit)
 
 // Button properties
 const string   BuyButtonName = "BuyToggleButton";
@@ -33,6 +33,8 @@ const int      ButtonSpacing = 5;      // Space between buttons
 const color    ButtonOnColor = clrForestGreen;
 const color    ButtonOffColor = clrFireBrick;
 const color    ButtonTextColor = clrWhite;
+
+const string SignalStrengthButtonName = "SignalStrengthToggleButton";
 
 // Line properties
 const string   BullishLinePrefix = "BullishEntry_";
@@ -58,12 +60,12 @@ SignalData arrowBullish;    // Stores bullish signal data
 // Global variables
 int zzHandle;              // Handle for custom indicator
 int tsiStochHandle;        // Handle for ComboTSI_Stoch indicator
-int mpHandle;              // Handle for MarketProfile indicator
 datetime lastBarTime;      // Time of last processed bar
 CTrade trade;              // Trade object
 CPositionInfo positionInfo;
 bool isBuyEnabled = false; // Global flag for buy trading permission
 bool isSellEnabled = false; // Global flag for sell trading permission
+bool UseWeakSignals = true; // false=only strong signals, true=both strong and weak
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -92,13 +94,6 @@ int OnInit()
    tsiStochHandle = iCustom(NULL, 0, "Custom\\ComboTSI_Stoch");
    if(tsiStochHandle == INVALID_HANDLE) {
       Alert("Failed to load ComboTSI_Stoch indicator");
-      return(INIT_FAILED);
-   }
-
-   // Load MarketProfile indicator
-   mpHandle = iCustom(NULL, 0, "Custom\\MarketProfile");
-   if(mpHandle == INVALID_HANDLE) {
-      Alert("Failed to load MarketProfile indicator. Error: ", GetLastError());
       return(INIT_FAILED);
    }
 
@@ -172,7 +167,44 @@ void CreateTradeToggleButtons()
    // Make sure buttons are visible and in the foreground
    ObjectSetInteger(0, BuyButtonName, OBJPROP_HIDDEN, false);
    ObjectSetInteger(0, SellButtonName, OBJPROP_HIDDEN, false);
-   ChartRedraw();
+
+   // Delete if already exists to prevent duplication
+   ObjectDelete(0, SignalStrengthButtonName);
+   
+   // Create the Signal Strength Toggle Button 
+   if(!ObjectCreate(0, SignalStrengthButtonName, OBJ_BUTTON, 0, 0, 0))
+   {
+      Print("Failed to create Signal Strength button! Error code: ", GetLastError());
+      // Consider whether to return or allow other buttons to be created
+   }
+   else
+   {
+       // Assuming Buy and Sell buttons are side-by-side on the first row of buttons
+       // Adjust YDistance to place it on a new row below them
+       // Adjust XSize if you want it to span the width of both Buy/Sell buttons
+       ObjectSetInteger(0, SignalStrengthButtonName, OBJPROP_XDISTANCE, ButtonXOffset); // Align with other buttons or set specific X
+       ObjectSetInteger(0, SignalStrengthButtonName, OBJPROP_YDISTANCE, ButtonYOffset + ButtonHeight + ButtonSpacing); // Positioned on the next row
+       ObjectSetInteger(0, SignalStrengthButtonName, OBJPROP_XSIZE, ButtonWidth * 2 + ButtonSpacing); // Example: Make it as wide as Buy + Sell + Spacing
+       ObjectSetInteger(0, SignalStrengthButtonName, OBJPROP_YSIZE, ButtonHeight);
+       ObjectSetInteger(0, SignalStrengthButtonName, OBJPROP_CORNER, CORNER_LEFT_UPPER); // Assuming standard corner
+       ObjectSetString(0, SignalStrengthButtonName, OBJPROP_FONT, "Arial"); // Example Font
+       ObjectSetInteger(0, SignalStrengthButtonName, OBJPROP_FONTSIZE, 10); // Example Font Size
+       ObjectSetInteger(0, SignalStrengthButtonName, OBJPROP_COLOR, ButtonTextColor); // Text color
+
+       // Set initial text and color based on UseWeakSignals
+       string buttonText = "Signals: " + (UseWeakSignals ? "All (Strong & Weak)" : "Strong Only");
+       // Consider defining specific colors for this button's states, e.g., SignalButtonAllColor, SignalButtonStrongOnlyColor
+       // Using existing ButtonOnColor (e.g. Green) for "All" and ButtonOffColor (e.g. Red) for "Strong Only"
+       color buttonBgColor = UseWeakSignals ? ButtonOnColor : ButtonOffColor; 
+
+       ObjectSetString(0, SignalStrengthButtonName, OBJPROP_TEXT, buttonText);
+       ObjectSetInteger(0, SignalStrengthButtonName, OBJPROP_BGCOLOR, buttonBgColor);
+       ObjectSetInteger(0, SignalStrengthButtonName, OBJPROP_SELECTABLE, false);
+       ObjectSetInteger(0, SignalStrengthButtonName, OBJPROP_SELECTED, false);
+       ObjectSetInteger(0, SignalStrengthButtonName, OBJPROP_HIDDEN, false);
+    }   
+   
+   ChartRedraw();   
 }
 
 //+------------------------------------------------------------------+
@@ -290,7 +322,7 @@ void ProcessNewBar()
       // Draw bearish entry line
       DrawEntryLine(BearishLinePrefix, c1Time, arrowBearish.thresholdPrice, BearishLineColor);
       
-      if(EnableAlerts) Alert("New Bearish Signal at ", c1Time, " Threshold: ", arrowBearish.thresholdPrice);
+      //if(EnableAlerts) Alert("New Bearish Signal at ", c1Time, " Threshold: ", arrowBearish.thresholdPrice);
    }
    
    // Check for bullish signal (low arrow)
@@ -307,7 +339,7 @@ void ProcessNewBar()
       // Draw bullish entry line
       DrawEntryLine(BullishLinePrefix, c1Time, arrowBullish.thresholdPrice, BullishLineColor);
       
-      if(EnableAlerts) Alert("New Bullish Signal at ", c1Time, " Threshold: ", arrowBullish.thresholdPrice);
+      //if(EnableAlerts) Alert("New Bullish Signal at ", c1Time, " Threshold: ", arrowBullish.thresholdPrice);
    }
 }
 
@@ -338,23 +370,6 @@ void CheckEntryConditions()
       return;
    }
    int currentSignal = (int)tsiStochSignal[0];
-   
-   // Get Market Profile Median Price
-   double medianPriceArr[1];
-   double medianPrice = EMPTY_VALUE; // Initialize to EMPTY_VALUE
-   if(mpHandle != INVALID_HANDLE) // Ensure MarketProfile handle is valid
-   {
-      // Buffer 6 is the SessionMedianBuffer (0-indexed)
-      // We want the median for the current bar (shift 0)
-      if(CopyBuffer(mpHandle, 6, 0, 1, medianPriceArr) == 1)
-      {
-         medianPrice = medianPriceArr[0];
-      }
-   }
-
-   // Optional: Print for debugging
-   //if(medianPrice != EMPTY_VALUE) Print("Median Price: ", medianPrice, ", Ask: ", ask, ", Bid: ", bid);
-   //else Print("Median Price: EMPTY_VALUE");
 
    // Bearish signal processing
    if(arrowBearish.candleTime > 0 && !arrowBearish.signalUsed && bid <= arrowBearish.thresholdPrice && isSellEnabled)
@@ -362,17 +377,25 @@ void CheckEntryConditions()
       bool tsiSignalValid = (currentSignal == 1) || (UseWeakSignals && currentSignal == 3);
       
       // <<<< MODIFY MEDIAN CHECK HERE >>>>
-      bool medianConditionMet = (medianPrice != EMPTY_VALUE && bid > medianPrice);
+      //bool medianConditionMet = (medianPrice != EMPTY_VALUE && bid > medianPrice);
 
-      if(tsiSignalValid && medianConditionMet) {
-         ExecuteTrade(ORDER_TYPE_SELL, bid);
-         
-         arrowBearish.signalUsed = true;
-      }
-      else if(EnableAlerts) { // Provide more detailed alerts
-         if (!tsiSignalValid) Alert("Sell signal from ZZ_Semafor rejected - No matching ComboTSI_Stoch signal.");
-         else if (medianPrice == EMPTY_VALUE) Alert("Sell signal from ZZ_Semafor rejected - Median Price not available from MarketProfile.");
-         else if (!medianConditionMet) Alert("Sell signal from ZZ_Semafor rejected - Bid (", bid, ") is not above Median Price (", medianPrice, ").");
+      if(tsiSignalValid) {
+          // Check MaxOpenTradesType for Sells
+          int openSellTrades = 0;
+          if (MaxOpenTradesType > 0) { // Only count if the limit is active
+              for(int i = PositionsTotal() - 1; i >= 0; i--) {
+                  if(positionInfo.SelectByIndex(i)) { // Select position by index
+                      if(positionInfo.Symbol() == _Symbol && positionInfo.Magic() == MagicNumber && positionInfo.PositionType() == POSITION_TYPE_SELL) {
+                          openSellTrades++;
+                      }
+                  }
+              }
+          }
+
+          if(MaxOpenTradesType == 0 || openSellTrades < MaxOpenTradesType) {
+              ExecuteTrade(ORDER_TYPE_SELL, bid);
+              arrowBearish.signalUsed = true;
+          }
       }
    }
    
@@ -380,18 +403,24 @@ void CheckEntryConditions()
    if(arrowBullish.candleTime > 0 && !arrowBullish.signalUsed && ask >= arrowBullish.thresholdPrice && isBuyEnabled)
    {
       bool tsiSignalValid = (currentSignal == 0) || (UseWeakSignals && currentSignal == 2);
-
-      // <<<< MODIFY MEDIAN CHECK HERE >>>>
-      bool medianConditionMet = (medianPrice != EMPTY_VALUE && ask < medianPrice);
       
-      if(tsiSignalValid && medianConditionMet) {
-         ExecuteTrade(ORDER_TYPE_BUY, ask);
-         arrowBullish.signalUsed = true;
-      }
-      else if(EnableAlerts) { // Provide more detailed alerts
-         if (!tsiSignalValid) Alert("Buy signal from ZZ_Semafor rejected - No matching ComboTSI_Stoch signal.");
-         else if (medianPrice == EMPTY_VALUE) Alert("Buy signal from ZZ_Semafor rejected - Median Price not available from MarketProfile.");
-         else if (!medianConditionMet) Alert("Buy signal from ZZ_Semafor rejected - Ask (", ask, ") is not below Median Price (", medianPrice, ").");
+      if(tsiSignalValid) {
+          // Check MaxOpenTradesType for Buys
+          int openBuyTrades = 0;
+          if (MaxOpenTradesType > 0) { // Only count if the limit is active
+              for(int i = PositionsTotal() - 1; i >= 0; i--) {
+                  if(positionInfo.SelectByIndex(i)) { // Select position by index
+                      if(positionInfo.Symbol() == _Symbol && positionInfo.Magic() == MagicNumber && positionInfo.PositionType() == POSITION_TYPE_BUY) {
+                          openBuyTrades++;
+                      }
+                  }
+              }
+          }
+
+          if(MaxOpenTradesType == 0 || openBuyTrades < MaxOpenTradesType) {
+              ExecuteTrade(ORDER_TYPE_BUY, ask);
+              arrowBullish.signalUsed = true;
+          }
       }
    }
 }
@@ -409,7 +438,7 @@ void ExecuteTrade(ENUM_ORDER_TYPE orderType, double requestedPrice)
 
    // Adjust TP and SL to account for spread
    double realTP = TakeProfit + spreadPoints;
-   double realSL = StopLoss + spreadPoints;
+   double realSL = StopLoss;
 
    double sl = 0.0, tp = 0.0;
 
@@ -468,7 +497,7 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       // Redraw the chart to show changes
       ChartRedraw();
       
-      if(EnableAlerts) Alert("Buy trading is now ", (isBuyEnabled ? "ENABLED" : "DISABLED"));
+      //if(EnableAlerts) Alert("Buy trading is now ", (isBuyEnabled ? "ENABLED" : "DISABLED"));
    }
    
    // Handle Sell button click event
@@ -484,8 +513,26 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       // Redraw the chart to show changes
       ChartRedraw();
       
-      if(EnableAlerts) Alert("Sell trading is now ", (isSellEnabled ? "ENABLED" : "DISABLED"));
+      //if(EnableAlerts) Alert("Sell trading is now ", (isSellEnabled ? "ENABLED" : "DISABLED"));
    }
+   
+       // --- Handle Signal Strength Toggle Button click ---
+   if(id == CHARTEVENT_OBJECT_CLICK && sparam == SignalStrengthButtonName)
+   {
+      UseWeakSignals = !UseWeakSignals; // Toggle the flag
+
+      // Update the button appearance
+      string newButtonText = "Signals: " + (UseWeakSignals ? "All (Strong & Weak)" : "Strong Only");
+      // Adjust colors as needed. These should match the ones in CreateTradeToggleButtons
+      color newButtonBgColor = UseWeakSignals ? ButtonOnColor : ButtonOffColor; 
+
+      ObjectSetString(0, SignalStrengthButtonName, OBJPROP_TEXT, newButtonText);
+      ObjectSetInteger(0, SignalStrengthButtonName, OBJPROP_BGCOLOR, newButtonBgColor);
+       
+      ChartRedraw(); // Redraw chart to show button changes
+      //Alert("Signal strength set to: ", (UseWeakSignals ? "All (Strong & Weak)" : "Strong Only"));
+      // return; // If you want to signify the event is fully handled
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -500,12 +547,11 @@ void OnDeinit(const int reason)
    if(tsiStochHandle != INVALID_HANDLE) {
       IndicatorRelease(tsiStochHandle);
    }
-   if(mpHandle != INVALID_HANDLE) {
-      IndicatorRelease(mpHandle);
-   }
+
    // Delete the button objects
    ObjectDelete(0, BuyButtonName);
    ObjectDelete(0, SellButtonName);
+   ObjectDelete(0, SignalStrengthButtonName);
 }
 
 //+------------------------------------------------------------------+
