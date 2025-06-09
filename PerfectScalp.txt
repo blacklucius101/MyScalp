@@ -32,16 +32,20 @@ IMPORTANT: Indicator buffer indices and logic for `Single_Level_ZZ_Semafor.mq5` 
 input group "Entry Logic"
 input double InpRetracementPercent = 61.8; // Retracement Percentage of Previous Candle Range
 enum ENUM_COMBO_TSI_SIGNAL_TYPE
-  {
+{
    Strong_Only,      // Strong Only
    Strong_And_Weak   // All (Strong & Weak)
-  };
+};
 input ENUM_COMBO_TSI_SIGNAL_TYPE InpComboTSISignalType = Strong_And_Weak; // ComboTSI Signal Type
 
 //--- Trade Management
 input group "Trade Management"
 input int    InpStopLossPoints = 70000;    // Stop Loss in Points (0 = disabled)
 input int    InpTakeProfitPoints = 5000;   // Take Profit in Points (0 = disabled)
+input int    InpTrailingStopPoints = 0;    // Trailing Stop in Points (0 = disabled)
+input int    InpTrailingStepPoints = 1;    // Trailing Step in Points (min 1)
+input int    InpStartTrailingPoints = 0;   // Start Trailing At Profit Points (0 = activate as soon as in profit)
+input int    InpMaxSameTypeTrades = 1;     // Max Simultaneous Trades of Same Type (0 = unlimited)
 input double InpLotSize = 0.0;        // Lot Size (0.0 = Dynamic)
 input ulong  InpMagicNumber = 12345;  // Magic Number for trades
 
@@ -60,7 +64,8 @@ input ENUM_APPLIED_PRICE InpMacdAppliedPrice = PRICE_CLOSE; // Standard MACD: Ap
 //+------------------------------------------------------------------+
 //| Signal Data Structure and Instances                              |
 //+------------------------------------------------------------------+
-struct SignalData {
+struct SignalData
+{
    datetime candleTime;     // Time of the signal candle
    double triggerPrice;     // Price where arrow appeared (high for bearish, low for bullish)
    double thresholdPrice;   // Calculated threshold price for entry
@@ -123,7 +128,7 @@ const int COMBOTSI_SIGNAL_BUFFER = 5; // Buffer for combined TSI+Stoch signal. V
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
-  {
+{
    ResetSignalData(psArrowBullish);
    ResetSignalData(psArrowBearish);
 
@@ -136,18 +141,18 @@ int OnInit()
    // Semafor Indicator
    hSemafor = iCustom(NULL, 0, InpSemaforIndicatorName);
    if(hSemafor == INVALID_HANDLE)
-     {
+   {
       PrintFormat("Error loading Semafor indicator '%s'. Check name/path in input parameters. Error: %d", InpSemaforIndicatorName, GetLastError());
       return(INIT_FAILED);
-     }
+   }
 
    // ComboTSI Stoch Indicator
    hComboTSI = iCustom(NULL, 0, InpComboTSIIndicatorName);
    if(hComboTSI == INVALID_HANDLE)
-     {
+   {
       PrintFormat("Error loading ComboTSI Stoch indicator '%s'. Check name/path in input parameters. Error: %d", InpComboTSIIndicatorName, GetLastError());
       return(INIT_FAILED);
-     }
+   }
 
    // MACD Cloud Indicator - Removed custom indicator loading
    // hMACDCloud = iCustom(NULL, 0, InpMACDCloudIndicatorName);
@@ -160,19 +165,19 @@ int OnInit()
    // Standard MACD Indicator
    hStandardMACD = iMACD(_Symbol, _Period, InpMacdFastEMA, InpMacdSlowEMA, InpMacdSignalSMA, InpMacdAppliedPrice);
    if(hStandardMACD == INVALID_HANDLE)
-     {
+   {
       PrintFormat("Error loading standard iMACD indicator. Error: %d", GetLastError());
       return(INIT_FAILED);
-     }
+   }
 
    Print("PerfectScalp EA initialized successfully. All indicators loaded.");
    return(INIT_SUCCEEDED);
-  }
+}
 //+------------------------------------------------------------------+
 //| Expert deinitialization function                                 |
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
-  {
+{
    //--- Release indicator handles
    if(hSemafor != INVALID_HANDLE) IndicatorRelease(hSemafor);
    if(hComboTSI != INVALID_HANDLE) IndicatorRelease(hComboTSI);
@@ -182,32 +187,32 @@ void OnDeinit(const int reason)
    //--- Clean up all EA-specific graphical objects
    // Iterate through all objects on the chart and delete those created by this EA
    for(int i = ObjectsTotal(0, -1, -1) - 1; i >= 0; i--) // Check all object types in the main window
-     {
+   {
       string objName = ObjectName(0, i, -1, -1);
       if(StringFind(objName, "PS_Line_") == 0) // Check if the object name starts with our prefix
-        {
+      {
          ObjectDelete(0, objName);
-        }
-     }
+      }
+   }
    
    //--- Clear any comment from the chart
    Comment(""); 
    
    //--- Print deinitialization message with reason
    PrintFormat("PerfectScalp EA deinitialized. Reason code: %d (Refer to MQL5 docs for REASON_# codes)", reason);
-  }
+}
 //+------------------------------------------------------------------+
 //| Helper function to get lot size decimal places                   |
 //+------------------------------------------------------------------+
 int GetLotDigits()
-  {
+{
    double lot_step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    if(lot_step == 0.1) return(1);
    if(lot_step == 0.01) return(2);
    if(lot_step == 0.001) return(3);
    // Default for safety, though most brokers use 0.1, 0.01, or 0.001
    return(2);
-  }
+}
 //+------------------------------------------------------------------+
 //| Process New Bar Signals                                          |
 //+------------------------------------------------------------------+
@@ -252,7 +257,9 @@ void ProcessNewBarSignals()
       if (psArrowBullish.candleRange > 0) // Avoid division by zero or nonsensical thresholds
       {
          psArrowBullish.thresholdPrice = NormalizeDouble(psArrowBullish.triggerPrice + (psArrowBullish.candleRange * InpRetracementPercent / 100.0), _Digits);
-      } else {
+      }
+      else
+      {
          psArrowBullish.thresholdPrice = 0.0; // Invalid if no range
       }
       PrintFormat("ProcessNewBarSignals: Bullish Semafor DETECTED. Time: %s, TrigP: %.5f, Range: %.5f, ThrP: %.5f",
@@ -287,7 +294,9 @@ void ProcessNewBarSignals()
       if (psArrowBearish.candleRange > 0)
       {
          psArrowBearish.thresholdPrice = NormalizeDouble(psArrowBearish.triggerPrice - (psArrowBearish.candleRange * InpRetracementPercent / 100.0), _Digits);
-      } else {
+      }
+      else
+      {
          psArrowBearish.thresholdPrice = 0.0; // Invalid if no range
       }
       PrintFormat("ProcessNewBarSignals: Bearish Semafor DETECTED. Time: %s, TrigP: %.5f, Range: %.5f, ThrP: %.5f",
@@ -315,7 +324,7 @@ void ProcessNewBarSignals()
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick()
-  {
+{
    // PrintFormat("OnTick: Start Tick. Current Time: %s", TimeToString(TimeCurrent()));
    // Removed static Semafor identification variables
 
@@ -323,7 +332,7 @@ void OnTick()
    datetime currentBarOpenTime = (datetime)SeriesInfoInteger(_Symbol, _Period, SERIES_LASTBAR_DATE);
    bool isNewBar = false;
    if(lastBarOpenTime != currentBarOpenTime)
-     {
+   {
       lastBarOpenTime = currentBarOpenTime;
       hasTradedThisBar = false; // Reset global trade flag on new bar
       // Removed semaforBarIndex, semaforPriceLevel, prevCandleRange initializations
@@ -336,60 +345,66 @@ void OnTick()
 
       //--- Visualization Management: Delete old lines (remains here) ---
       for(int i = ObjectsTotal(0, -1, OBJ_TREND) - 1; i >= 0; i--)
-        {
+      {
          string objName = ObjectName(0, i, -1, OBJ_TREND);
          if(StringFind(objName, "PS_Line_") == 0) 
-           {
+         {
             datetime lineBarTime = (datetime)ObjectGetInteger(0, objName, OBJPROP_TIME, 0);
             if(lineBarTime > 0 && iBarShift(_Symbol, _Period, lineBarTime, false) > 5)
-              {
+            {
                ObjectDelete(0, objName);
-              }
-           }
-        }
-     } // End of isNewBar initial block
+            }
+         }
+      }
+   } // End of isNewBar initial block
 
    //--- If a trade has already been executed for this bar's signal context, exit.
    //    Note: psArrowBullish/Bearish.signalUsed flags are now primary for specific signal usage.
    //    hasTradedThisBar is a more general "traded on this bar" flag, might need refinement
    //    if multiple distinct signals could appear and be traded on the same bar (unlikely with this design).
    if(hasTradedThisBar)
-     {
-       // Print("OnTick: hasTradedThisBar is true. Waiting for next bar/signal opportunity.");
-       // Still proceed to exit logic
-     }
+   {
+      // Print("OnTick: hasTradedThisBar is true. Waiting for next bar/signal opportunity.");
+      // Still proceed to exit logic
+   }
 
    // Fetch current prices for entry evaluation
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    if(ask == 0 || bid == 0)
-     {
+   {
       Print("OnTick: Invalid Ask/Bid prices. Cannot proceed.");
       return;
-     }
+   }
    // PrintFormat("OnTick: Current Ask: %.5f, Bid: %.5f", ask, bid);
 
    // --- Check for Bullish Entry ---
    PrintFormat("OnTick: Checking Bullish. psArrowBullish.candleTime: %s, signalUsed: %d, thresholdPrice: %.5f, hasTradedThisBar: %d",
                TimeToString(psArrowBullish.candleTime), (int)psArrowBullish.signalUsed, psArrowBullish.thresholdPrice, (int)hasTradedThisBar);
    if(psArrowBullish.candleTime > 0 && !psArrowBullish.signalUsed && psArrowBullish.thresholdPrice > 0.0 && !hasTradedThisBar)
-     {
+   {
       PrintFormat("OnTick: Bullish Signal Active. Ask: %.5f, Threshold: %.5f", ask, psArrowBullish.thresholdPrice);
       if(ask >= psArrowBullish.thresholdPrice) // Price must move UP to or through the threshold
-        {
+      {
          Print("OnTick: Bullish Retracement condition met.");
          bool tsiConfirmed = false; 
          bool macdConfirmed = false; // Ensure macdConfirmed is declared here
          // --- ComboTSI Confirmation (current candle - shift 0) ---
          double comboSignalValue[1];
          if(CopyBuffer(hComboTSI, COMBOTSI_SIGNAL_BUFFER, 0, 1, comboSignalValue) > 0)
-           {
+         {
             double signal = comboSignalValue[0];
             if(InpComboTSISignalType == Strong_Only && signal == 0) tsiConfirmed = true; 
             else if(InpComboTSISignalType == Strong_And_Weak && (signal == 0 || signal == 2)) tsiConfirmed = true;
-           }
-         if(!tsiConfirmed) { Print("OnTick: Bullish TSI condition NOT MET."); }
-         else { Print("OnTick: Bullish TSI Confirmed."); }
+         }
+         if(!tsiConfirmed)
+         {
+            Print("OnTick: Bullish TSI condition NOT MET.");
+         }
+         else
+         {
+            Print("OnTick: Bullish TSI Confirmed.");
+         }
          // bool tsiConfirmed = true; // TEMPORARILY TRUE - This line must be removed.
 
          // --- 3. MACD Confirmation (Continuous State using Standard iMACD) ---
@@ -401,96 +416,178 @@ void OnTick()
          if(CopyBuffer(hStandardMACD, MAIN_LINE, 0, 1, macdMainLine_B) > 0 &&
             CopyBuffer(hStandardMACD, SIGNAL_LINE, 0, 1, macdSignalLine_B) > 0)
          {
-             PrintFormat("OnTick: MACD State (Bullish Entry) - Main: %.5f, Signal: %.5f", macdMainLine_B[0], macdSignalLine_B[0]);
-             if(macdMainLine_B[0] > macdSignalLine_B[0])
-             {
-                 macdConfirmed = true;
-                 Print("OnTick: Bullish MACD State Confirmed (Main > Signal).");
-             }
-             else
-             {
-                 Print("OnTick: Bullish MACD State NOT Confirmed (Main <= Signal).");
-             }
+            PrintFormat("OnTick: MACD State (Bullish Entry) - Main: %.5f, Signal: %.5f", macdMainLine_B[0], macdSignalLine_B[0]);
+            if(macdMainLine_B[0] > macdSignalLine_B[0])
+            {
+               macdConfirmed = true;
+               Print("OnTick: Bullish MACD State Confirmed (Main > Signal).");
+            }
+            else
+            {
+               Print("OnTick: Bullish MACD State NOT Confirmed (Main <= Signal).");
+            }
          }
          else
          {
-             Print("OnTick: Failed to copy standard MACD lines for Bullish Entry check.");
+            Print("OnTick: Failed to copy standard MACD lines for Bullish Entry check.");
          }
          // The existing 'if(tsiConfirmed && macdConfirmed)' will handle progression
 
          if(tsiConfirmed && macdConfirmed)
-           {
-            Print("OnTick: All Bullish conditions met. Proceeding with trade setup.");
-            double lotSizeToUse = InpLotSize;
-            if (InpLotSize <= 0.009) // Dynamic lot calculation
+         {
+            // --- Max Trades Check for BUY ---
+            if(InpMaxSameTypeTrades > 0)
             {
-                double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-                lotSizeToUse = NormalizeDouble(balance / 1000.0, GetLotDigits());
-                double min_lot_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-                double max_lot_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
-                double lot_step_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-                // PrintFormat("OnTick: Dynamic lot calc (Buy): Initial=%.2f, Min=%.2f, Max=%.2f, Step=%.2f", lotSizeToUse, min_lot_dyn, max_lot_dyn, lot_step_dyn);
-                if (lotSizeToUse < min_lot_dyn) lotSizeToUse = min_lot_dyn;
-                if (lotSizeToUse > max_lot_dyn) lotSizeToUse = max_lot_dyn;
-                if (lot_step_dyn > 0) lotSizeToUse = floor(lotSizeToUse / lot_step_dyn) * lot_step_dyn;
-                lotSizeToUse = NormalizeDouble(lotSizeToUse, GetLotDigits());
-                // PrintFormat("OnTick: Dynamic lot calc (Buy): Adjusted=%.2f", lotSizeToUse);
-            }
-            if (lotSizeToUse < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
+               int currentBuyTrades = 0;
+               for(int k=PositionsTotal()-1; k>=0; k--)
+               {
+                  // It's important to select the position by ticket *before* querying its properties.
+                  ulong current_ticket_buy_check = PositionGetTicket(k);
+                  if(current_ticket_buy_check == 0) continue; // Skip if ticket is invalid
+                  if(PositionSelectByTicket(current_ticket_buy_check))
+                  {
+                     if(PositionGetInteger(POSITION_MAGIC) == InpMagicNumber &&
+                        PositionGetString(POSITION_SYMBOL) == _Symbol &&
+                        PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+                     {
+                        currentBuyTrades++;
+                     }
+                  }
+               }
+               if(currentBuyTrades >= InpMaxSameTypeTrades)
+               {
+                  PrintFormat("OnTick: Max BUY trades (%d) reached. Skipping new BUY signal.", InpMaxSameTypeTrades);
+                  // By not having an 'else' block that calls trade.Buy(), we effectively skip the trade.
+               }
+               else // It's okay to proceed with trade opening logic
+               {
+                  Print("OnTick: All Bullish conditions met (trade limit check passed). Proceeding with trade setup.");
+                  double lotSizeToUse = InpLotSize;
+                  // ... (rest of the existing trade opening logic for BUY)
+                  if (InpLotSize <= 0.009) // Dynamic lot calculation
+                  {
+                     double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+                     lotSizeToUse = NormalizeDouble(balance / 1000.0, GetLotDigits());
+                     double min_lot_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+                     double max_lot_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+                     double lot_step_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+                     if (lotSizeToUse < min_lot_dyn) lotSizeToUse = min_lot_dyn;
+                     if (lotSizeToUse > max_lot_dyn) lotSizeToUse = max_lot_dyn;
+                     if (lot_step_dyn > 0) lotSizeToUse = floor(lotSizeToUse / lot_step_dyn) * lot_step_dyn;
+                     lotSizeToUse = NormalizeDouble(lotSizeToUse, GetLotDigits());
+                  }
+                  if (lotSizeToUse < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
+                  {
+                     PrintFormat("OnTick: Lot size %.2f is less than SYMBOL_VOLUME_MIN %.2f. Skipping BUY trade.", lotSizeToUse, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN));
+                  }
+                  else
+                  {
+                     CTrade trade;
+                     trade.SetExpertMagicNumber(InpMagicNumber);
+                     trade.SetDeviationInPoints(3);
+                     trade.SetTypeFillingBySymbol(_Symbol);
+                     double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+                     double slPrice = 0;
+                     if(InpStopLossPoints > 0) slPrice = NormalizeDouble(psArrowBullish.triggerPrice - InpStopLossPoints * point, _Digits);
+                     double tpPrice = 0;
+                     if(InpTakeProfitPoints > 0) tpPrice = NormalizeDouble(ask + InpTakeProfitPoints * point, _Digits);
+                     PrintFormat("OnTick: Preparing BUY. Lots: %.2f, Symbol: %s, Price: %.5f, SL: %.5f, TP: %.5f, Magic: %d",
+                                 lotSizeToUse, _Symbol, ask, slPrice, tpPrice, InpMagicNumber);
+                     if(trade.Buy(lotSizeToUse, _Symbol, ask, slPrice, tpPrice, "PerfectScalp Buy"))
+                     {
+                        PrintFormat("OnTick: BUY order PLACED. ReqPrice: %.5f, ActualPrice: %.5f, SL: %.5f, TP: %.5f, Deal: %d, Retcode: %d",
+                                    ask, trade.ResultPrice(), slPrice, tpPrice, trade.ResultDeal(), trade.ResultRetcode());
+                        psArrowBullish.signalUsed = true;
+                        hasTradedThisBar = true;
+                     }
+                     else
+                     {
+                        PrintFormat("OnTick: BUY order FAILED. Error: %d, Retcode: %d. Price: %.5f, SL: %.5f, TP: %.5f",
+                                    trade.ResultDeal(), trade.ResultRetcode(), ask, slPrice, tpPrice);
+                     }
+                  }
+               } // End of else block for currentBuyTrades < InpMaxSameTypeTrades
+            } // End of InpMaxSameTypeTrades > 0 check
+            else // InpMaxSameTypeTrades is 0 (unlimited) or less (treat as unlimited) - Original logic
             {
-                PrintFormat("OnTick: Lot size %.2f is less than SYMBOL_VOLUME_MIN %.2f. Skipping BUY trade.", lotSizeToUse, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN));
-            }
-            else
-            {
-               CTrade trade;
-               trade.SetExpertMagicNumber(InpMagicNumber);
-               trade.SetDeviationInPoints(3);
-               trade.SetTypeFillingBySymbol(_Symbol);
-               double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-               double slPrice = 0;
-               if(InpStopLossPoints > 0) slPrice = NormalizeDouble(psArrowBullish.triggerPrice - InpStopLossPoints * point, _Digits);
-               double tpPrice = 0;
-               if(InpTakeProfitPoints > 0) tpPrice = NormalizeDouble(ask + InpTakeProfitPoints * point, _Digits);
-               PrintFormat("OnTick: Preparing BUY. Lots: %.2f, Symbol: %s, Price: %.5f, SL: %.5f, TP: %.5f, Magic: %d",
-                           lotSizeToUse, _Symbol, ask, slPrice, tpPrice, InpMagicNumber);
-               if(trade.Buy(lotSizeToUse, _Symbol, ask, slPrice, tpPrice, "PerfectScalp Buy"))
-                 {
-                  PrintFormat("OnTick: BUY order PLACED. ReqPrice: %.5f, ActualPrice: %.5f, SL: %.5f, TP: %.5f, Deal: %d, Retcode: %d",
-                              ask, trade.ResultPrice(), slPrice, tpPrice, trade.ResultDeal(), trade.ResultRetcode());
-                  psArrowBullish.signalUsed = true;
-                  hasTradedThisBar = true;
-                 }
+               Print("OnTick: All Bullish conditions met (trade limit off). Proceeding with trade setup.");
+               double lotSizeToUse = InpLotSize;
+               if (InpLotSize <= 0.009) // Dynamic lot calculation
+               {
+                  double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+                  lotSizeToUse = NormalizeDouble(balance / 1000.0, GetLotDigits());
+                  double min_lot_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+                  double max_lot_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+                  double lot_step_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+                  // PrintFormat("OnTick: Dynamic lot calc (Buy): Initial=%.2f, Min=%.2f, Max=%.2f, Step=%.2f", lotSizeToUse, min_lot_dyn, max_lot_dyn, lot_step_dyn);
+                  if (lotSizeToUse < min_lot_dyn) lotSizeToUse = min_lot_dyn;
+                  if (lotSizeToUse > max_lot_dyn) lotSizeToUse = max_lot_dyn;
+                  if (lot_step_dyn > 0) lotSizeToUse = floor(lotSizeToUse / lot_step_dyn) * lot_step_dyn;
+                  lotSizeToUse = NormalizeDouble(lotSizeToUse, GetLotDigits());
+                  // PrintFormat("OnTick: Dynamic lot calc (Buy): Adjusted=%.2f", lotSizeToUse);
+               }
+               if (lotSizeToUse < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
+               {
+                  PrintFormat("OnTick: Lot size %.2f is less than SYMBOL_VOLUME_MIN %.2f. Skipping BUY trade.", lotSizeToUse, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN));
+               }
                else
-                 {
-                  PrintFormat("OnTick: BUY order FAILED. Error: %d, Retcode: %d. Price: %.5f, SL: %.5f, TP: %.5f",
-                              trade.ResultDeal(), trade.ResultRetcode(), ask, slPrice, tpPrice);
-                 }
+               {
+                  CTrade trade;
+                  trade.SetExpertMagicNumber(InpMagicNumber);
+                  trade.SetDeviationInPoints(3);
+                  trade.SetTypeFillingBySymbol(_Symbol);
+                  double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+                  double slPrice = 0;
+                  if(InpStopLossPoints > 0) slPrice = NormalizeDouble(psArrowBullish.triggerPrice - InpStopLossPoints * point, _Digits);
+                  double tpPrice = 0;
+                  if(InpTakeProfitPoints > 0) tpPrice = NormalizeDouble(ask + InpTakeProfitPoints * point, _Digits);
+                  PrintFormat("OnTick: Preparing BUY. Lots: %.2f, Symbol: %s, Price: %.5f, SL: %.5f, TP: %.5f, Magic: %d",
+                              lotSizeToUse, _Symbol, ask, slPrice, tpPrice, InpMagicNumber);
+                  if(trade.Buy(lotSizeToUse, _Symbol, ask, slPrice, tpPrice, "PerfectScalp Buy"))
+                  {
+                     PrintFormat("OnTick: BUY order PLACED. ReqPrice: %.5f, ActualPrice: %.5f, SL: %.5f, TP: %.5f, Deal: %d, Retcode: %d",
+                                 ask, trade.ResultPrice(), slPrice, tpPrice, trade.ResultDeal(), trade.ResultRetcode());
+                     psArrowBullish.signalUsed = true;
+                     hasTradedThisBar = true;
+                  }
+                  else
+                  {
+                     PrintFormat("OnTick: BUY order FAILED. Error: %d, Retcode: %d. Price: %.5f, SL: %.5f, TP: %.5f",
+                                 trade.ResultDeal(), trade.ResultRetcode(), ask, slPrice, tpPrice);
+                  }
+               }
             }
-           }
-        }
-     }
+         }
+      }
+   }
 
    // --- Check for Bearish Entry ---
    PrintFormat("OnTick: Checking Bearish. psArrowBearish.candleTime: %s, signalUsed: %d, thresholdPrice: %.5f, hasTradedThisBar: %d",
                TimeToString(psArrowBearish.candleTime), (int)psArrowBearish.signalUsed, psArrowBearish.thresholdPrice, (int)hasTradedThisBar);
    if(psArrowBearish.candleTime > 0 && !psArrowBearish.signalUsed && psArrowBearish.thresholdPrice > 0.0 && !hasTradedThisBar)
-     {
+   {
       PrintFormat("OnTick: Bearish Signal Active. Bid: %.5f, Threshold: %.5f", bid, psArrowBearish.thresholdPrice);
       if(bid <= psArrowBearish.thresholdPrice) // Price must move DOWN to or through the threshold
-        {
+      {
          Print("OnTick: Bearish Retracement condition met.");
          bool tsiConfirmed = false;
          bool macdConfirmed = false; // Ensure macdConfirmed is declared here
          // --- ComboTSI Confirmation (current candle - shift 0) ---
          double comboSignalValue[1];
          if(CopyBuffer(hComboTSI, COMBOTSI_SIGNAL_BUFFER, 0, 1, comboSignalValue) > 0)
-           {
+         {
             double signal = comboSignalValue[0];
             if(InpComboTSISignalType == Strong_Only && signal == 1) tsiConfirmed = true; 
             else if(InpComboTSISignalType == Strong_And_Weak && (signal == 1 || signal == 3)) tsiConfirmed = true;
-           }
-         if(!tsiConfirmed) { Print("OnTick: Bearish TSI condition NOT MET."); }
-         else { Print("OnTick: Bearish TSI Confirmed."); }
+         }
+         if(!tsiConfirmed)
+         {
+            Print("OnTick: Bearish TSI condition NOT MET.");
+         }
+         else
+         {
+            Print("OnTick: Bearish TSI Confirmed.");
+         }
          // bool tsiConfirmed = true; // TEMPORARILY TRUE - This line must be removed.
 
          // --- 3. MACD Confirmation (Continuous State using Standard iMACD) ---
@@ -502,92 +599,271 @@ void OnTick()
          if(CopyBuffer(hStandardMACD, MAIN_LINE, 0, 1, macdMainLine_S) > 0 &&
             CopyBuffer(hStandardMACD, SIGNAL_LINE, 0, 1, macdSignalLine_S) > 0)
          {
-             PrintFormat("OnTick: MACD State (Bearish Entry) - Main: %.5f, Signal: %.5f", macdMainLine_S[0], macdSignalLine_S[0]);
-             if(macdMainLine_S[0] < macdSignalLine_S[0])
-             {
-                 macdConfirmed = true;
-                 Print("OnTick: Bearish MACD State Confirmed (Main < Signal).");
-             }
-             else
-             {
-                 Print("OnTick: Bearish MACD State NOT Confirmed (Main >= Signal).");
-             }
+            PrintFormat("OnTick: MACD State (Bearish Entry) - Main: %.5f, Signal: %.5f", macdMainLine_S[0], macdSignalLine_S[0]);
+            if(macdMainLine_S[0] < macdSignalLine_S[0])
+            {
+               macdConfirmed = true;
+               Print("OnTick: Bearish MACD State Confirmed (Main < Signal).");
+            }
+            else
+            {
+               Print("OnTick: Bearish MACD State NOT Confirmed (Main >= Signal).");
+            }
          }
          else
          {
-             Print("OnTick: Failed to copy standard MACD lines for Bearish Entry check.");
+            Print("OnTick: Failed to copy standard MACD lines for Bearish Entry check.");
          }
          // The existing 'if(tsiConfirmed && macdConfirmed)' will handle progression
          
          if(tsiConfirmed && macdConfirmed)
-           {
-            Print("OnTick: All Bearish conditions met. Proceeding with trade setup.");
-            double lotSizeToUse = InpLotSize;
-            if (InpLotSize <= 0.009) // Dynamic lot calculation
+         {
+            // --- Max Trades Check for SELL ---
+            if(InpMaxSameTypeTrades > 0)
             {
-                double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-                lotSizeToUse = NormalizeDouble(balance / 1000.0, GetLotDigits());
-                double min_lot_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-                double max_lot_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
-                double lot_step_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-                // PrintFormat("OnTick: Dynamic lot calc (Sell): Initial=%.2f, Min=%.2f, Max=%.2f, Step=%.2f", lotSizeToUse, min_lot_dyn, max_lot_dyn, lot_step_dyn);
-                if (lotSizeToUse < min_lot_dyn) lotSizeToUse = min_lot_dyn;
-                if (lotSizeToUse > max_lot_dyn) lotSizeToUse = max_lot_dyn;
-                if (lot_step_dyn > 0) lotSizeToUse = floor(lotSizeToUse / lot_step_dyn) * lot_step_dyn;
-                lotSizeToUse = NormalizeDouble(lotSizeToUse, GetLotDigits());
-                // PrintFormat("OnTick: Dynamic lot calc (Sell): Adjusted=%.2f", lotSizeToUse);
-            }
-            if (lotSizeToUse < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
+               int currentSellTrades = 0;
+               for(int k=PositionsTotal()-1; k>=0; k--)
+               {
+                  // It's important to select the position by ticket *before* querying its properties.
+                  ulong current_ticket_sell_check = PositionGetTicket(k);
+                  if(current_ticket_sell_check == 0) continue; // Skip if ticket is invalid
+                  if(PositionSelectByTicket(current_ticket_sell_check))
+                  {
+                     if(PositionGetInteger(POSITION_MAGIC) == InpMagicNumber &&
+                        PositionGetString(POSITION_SYMBOL) == _Symbol &&
+                        PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL)
+                     {
+                        currentSellTrades++;
+                     }
+                  }
+               }
+               if(currentSellTrades >= InpMaxSameTypeTrades)
+               {
+                  PrintFormat("OnTick: Max SELL trades (%d) reached. Skipping new SELL signal.", InpMaxSameTypeTrades);
+                  // By not having an 'else' block that calls trade.Sell(), we effectively skip the trade.
+               }
+               else // It's okay to proceed with trade opening logic
+               {
+                  Print("OnTick: All Bearish conditions met (trade limit check passed). Proceeding with trade setup.");
+                  double lotSizeToUse = InpLotSize;
+                  // ... (rest of the existing trade opening logic for SELL)
+                  if (InpLotSize <= 0.009) // Dynamic lot calculation
+                  {
+                     double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+                     lotSizeToUse = NormalizeDouble(balance / 1000.0, GetLotDigits());
+                     double min_lot_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+                     double max_lot_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+                     double lot_step_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+                     if (lotSizeToUse < min_lot_dyn) lotSizeToUse = min_lot_dyn;
+                     if (lotSizeToUse > max_lot_dyn) lotSizeToUse = max_lot_dyn;
+                     if (lot_step_dyn > 0) lotSizeToUse = floor(lotSizeToUse / lot_step_dyn) * lot_step_dyn;
+                     lotSizeToUse = NormalizeDouble(lotSizeToUse, GetLotDigits());
+                  }
+                  if (lotSizeToUse < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
+                  {
+                     PrintFormat("OnTick: Lot size %.2f is less than SYMBOL_VOLUME_MIN %.2f. Skipping SELL trade.", lotSizeToUse, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN));
+                  }
+                  else
+                  {
+                     CTrade trade;
+                     trade.SetExpertMagicNumber(InpMagicNumber);
+                     trade.SetDeviationInPoints(3);
+                     trade.SetTypeFillingBySymbol(_Symbol);
+                     double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+                     double slPrice = 0;
+                     if(InpStopLossPoints > 0) slPrice = NormalizeDouble(psArrowBearish.triggerPrice + InpStopLossPoints * point, _Digits);
+                     double tpPrice = 0;
+                     if(InpTakeProfitPoints > 0) tpPrice = NormalizeDouble(bid - InpTakeProfitPoints * point, _Digits);
+                     PrintFormat("OnTick: Preparing SELL. Lots: %.2f, Symbol: %s, Price: %.5f, SL: %.5f, TP: %.5f, Magic: %d",
+                                 lotSizeToUse, _Symbol, bid, slPrice, tpPrice, InpMagicNumber);
+                     if(trade.Sell(lotSizeToUse, _Symbol, bid, slPrice, tpPrice, "PerfectScalp Sell"))
+                     {
+                        PrintFormat("OnTick: SELL order PLACED. ReqPrice: %.5f, ActualPrice: %.5f, SL: %.5f, TP: %.5f, Deal: %d, Retcode: %d",
+                                    bid, trade.ResultPrice(), slPrice, tpPrice, trade.ResultDeal(), trade.ResultRetcode());
+                        psArrowBearish.signalUsed = true;
+                        hasTradedThisBar = true;
+                     }
+                     else
+                     {
+                        PrintFormat("OnTick: SELL order FAILED. Error: %d, Retcode: %d. Price: %.5f, SL: %.5f, TP: %.5f",
+                                    trade.ResultDeal(), trade.ResultRetcode(), bid, slPrice, tpPrice);
+                     }
+                  }
+               } // End of else block for currentSellTrades < InpMaxSameTypeTrades
+            } // End of InpMaxSameTypeTrades > 0 check
+            else // InpMaxSameTypeTrades is 0 (unlimited) or less (treat as unlimited) - Original logic
             {
-                PrintFormat("OnTick: Lot size %.2f is less than SYMBOL_VOLUME_MIN %.2f. Skipping SELL trade.", lotSizeToUse, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN));
-            }
-            else
-            {
-               CTrade trade;
-               trade.SetExpertMagicNumber(InpMagicNumber);
-               trade.SetDeviationInPoints(3);
-               trade.SetTypeFillingBySymbol(_Symbol);
-               double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-               double slPrice = 0;
-               if(InpStopLossPoints > 0) slPrice = NormalizeDouble(psArrowBearish.triggerPrice + InpStopLossPoints * point, _Digits);
-               double tpPrice = 0;
-               if(InpTakeProfitPoints > 0) tpPrice = NormalizeDouble(bid - InpTakeProfitPoints * point, _Digits);
-               PrintFormat("OnTick: Preparing SELL. Lots: %.2f, Symbol: %s, Price: %.5f, SL: %.5f, TP: %.5f, Magic: %d",
-                           lotSizeToUse, _Symbol, bid, slPrice, tpPrice, InpMagicNumber);
-               if(trade.Sell(lotSizeToUse, _Symbol, bid, slPrice, tpPrice, "PerfectScalp Sell"))
-                 {
-                  PrintFormat("OnTick: SELL order PLACED. ReqPrice: %.5f, ActualPrice: %.5f, SL: %.5f, TP: %.5f, Deal: %d, Retcode: %d",
-                              bid, trade.ResultPrice(), slPrice, tpPrice, trade.ResultDeal(), trade.ResultRetcode());
-                  psArrowBearish.signalUsed = true;
-                  hasTradedThisBar = true;
-                 }
+               Print("OnTick: All Bearish conditions met (trade limit off). Proceeding with trade setup.");
+               double lotSizeToUse = InpLotSize;
+               if (InpLotSize <= 0.009) // Dynamic lot calculation
+               {
+                  double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+                  lotSizeToUse = NormalizeDouble(balance / 1000.0, GetLotDigits());
+                  double min_lot_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+                  double max_lot_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+                  double lot_step_dyn = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+                  // PrintFormat("OnTick: Dynamic lot calc (Sell): Initial=%.2f, Min=%.2f, Max=%.2f, Step=%.2f", lotSizeToUse, min_lot_dyn, max_lot_dyn, lot_step_dyn);
+                  if (lotSizeToUse < min_lot_dyn) lotSizeToUse = min_lot_dyn;
+                  if (lotSizeToUse > max_lot_dyn) lotSizeToUse = max_lot_dyn;
+                  if (lot_step_dyn > 0) lotSizeToUse = floor(lotSizeToUse / lot_step_dyn) * lot_step_dyn;
+                  lotSizeToUse = NormalizeDouble(lotSizeToUse, GetLotDigits());
+                  // PrintFormat("OnTick: Dynamic lot calc (Sell): Adjusted=%.2f", lotSizeToUse);
+               }
+               if (lotSizeToUse < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
+               {
+                  PrintFormat("OnTick: Lot size %.2f is less than SYMBOL_VOLUME_MIN %.2f. Skipping SELL trade.", lotSizeToUse, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN));
+               }
                else
-                 {
-                  PrintFormat("OnTick: SELL order FAILED. Error: %d, Retcode: %d. Price: %.5f, SL: %.5f, TP: %.5f",
-                              trade.ResultDeal(), trade.ResultRetcode(), bid, slPrice, tpPrice);
-                 }
+               {
+                  CTrade trade;
+                  trade.SetExpertMagicNumber(InpMagicNumber);
+                  trade.SetDeviationInPoints(3);
+                  trade.SetTypeFillingBySymbol(_Symbol);
+                  double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+                  double slPrice = 0;
+                  if(InpStopLossPoints > 0) slPrice = NormalizeDouble(psArrowBearish.triggerPrice + InpStopLossPoints * point, _Digits);
+                  double tpPrice = 0;
+                  if(InpTakeProfitPoints > 0) tpPrice = NormalizeDouble(bid - InpTakeProfitPoints * point, _Digits);
+                  PrintFormat("OnTick: Preparing SELL. Lots: %.2f, Symbol: %s, Price: %.5f, SL: %.5f, TP: %.5f, Magic: %d",
+                              lotSizeToUse, _Symbol, bid, slPrice, tpPrice, InpMagicNumber);
+                  if(trade.Sell(lotSizeToUse, _Symbol, bid, slPrice, tpPrice, "PerfectScalp Sell"))
+                  {
+                     PrintFormat("OnTick: SELL order PLACED. ReqPrice: %.5f, ActualPrice: %.5f, SL: %.5f, TP: %.5f, Deal: %d, Retcode: %d",
+                                 bid, trade.ResultPrice(), slPrice, tpPrice, trade.ResultDeal(), trade.ResultRetcode());
+                     psArrowBearish.signalUsed = true;
+                     hasTradedThisBar = true;
+                  }
+                  else
+                  {
+                     PrintFormat("OnTick: SELL order FAILED. Error: %d, Retcode: %d. Price: %.5f, SL: %.5f, TP: %.5f",
+                                 trade.ResultDeal(), trade.ResultRetcode(), bid, slPrice, tpPrice);
+                  }
+               }
             }
-           }
-        }
-     }
+         }
+      }
+   }
    
    //--- Exit Condition Logic (check on every tick) ---
    int totalPositions = PositionsTotal();
-   CTrade tradeExit; // Instantiate CTrade for closing positions
-   tradeExit.SetExpertMagicNumber(InpMagicNumber); // Ensure it only closes its own trades
+   CTrade tradeExit; // Instantiate CTrade for closing/modifying positions
+   tradeExit.SetExpertMagicNumber(InpMagicNumber); // Ensure it only handles its own trades
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT); // Get point value for SL/TP calculations
 
    for(int i = totalPositions - 1; i >= 0; i--)
-     {
+   {
       ulong ticket = PositionGetTicket(i);
       if(ticket == 0) continue;
 
       if(PositionSelectByTicket(ticket))
-        {
+      {
          if(PositionGetInteger(POSITION_MAGIC) == InpMagicNumber &&
             PositionGetString(POSITION_SYMBOL) == _Symbol)
-           {
+         {
             ENUM_POSITION_TYPE positionType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-            
+            double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            double currentSL = PositionGetDouble(POSITION_SL);
+            double currentTP = PositionGetDouble(POSITION_TP); // TP might be needed for PositionModify
+
+            // --- Trailing Stop Logic ---
+            // This section manages the trailing stop loss for open positions.
+            // It activates if TrailingStopPoints and TrailingStepPoints are greater than 0.
+            // The goal is to lock in profits by moving the stop loss as the price moves favorably.
+            if(InpTrailingStopPoints > 0 && InpTrailingStepPoints > 0) // Trailing stop is enabled by user inputs
+            {
+               if(positionType == POSITION_TYPE_BUY)
+               {
+                  // For BUY positions: Trail SL upwards if price moves up
+                  double currentMarketPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID); // Use Bid for BUY profit calculation and SL adjustment
+                  double profitInPoints = (currentMarketPrice - openPrice) / point; // Calculate current profit in points
+
+                  // Only start trailing if profit reaches the minimum specified threshold
+                  if(profitInPoints >= InpStartTrailingPoints)
+                  {
+                     // Calculate the potential new Stop Loss based on current price and trailing distance
+                     double newSL = currentMarketPrice - (InpTrailingStopPoints * point);
+                     newSL = NormalizeDouble(newSL, _Digits); // Normalize to symbol's digit precision
+
+                     // Conditions for updating SL:
+                     // 1. New SL must be more favorable (higher) than the current SL.
+                     // 2. If current SL was 0 (not set), the new SL must be above the open price to be valid.
+                     if(newSL > currentSL || (currentSL == 0.0 && newSL > openPrice)) 
+                     {
+                        bool stepOk = false;
+                        // If SL was initially 0, the first valid adjustment is always okay (bypasses step check).
+                        if (currentSL == 0.0)
+                        {
+                           stepOk = true; 
+                        }
+                        else
+                        {
+                           // Otherwise, ensure the adjustment is at least by InpTrailingStepPoints
+                           stepOk = ((newSL - currentSL) / point) >= InpTrailingStepPoints;
+                        }
+
+                        if(stepOk)
+                        {
+                           if(tradeExit.PositionModify(ticket, newSL, currentTP))
+                           {
+                              PrintFormat("Trailing Stop (BUY) activated for #%d. New SL: %.5f, Profit Points: %.1f", ticket, newSL, profitInPoints);
+                           }
+                           else
+                           {
+                              PrintFormat("Error modifying position #%d for Trailing Stop (BUY). Retcode: %d. SL: %.5f, TP: %.5f",
+                                          ticket, tradeExit.ResultRetcode(), newSL, currentTP);
+                           }
+                        }
+                     }
+                  }
+               }
+               else if(positionType == POSITION_TYPE_SELL)
+               {
+                  // For SELL positions
+                  // For SELL positions: Trail SL downwards if price moves down
+                  double currentMarketPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK); // Use Ask for SELL profit calculation and SL adjustment
+                  double profitInPoints = (openPrice - currentMarketPrice) / point; // Calculate current profit in points
+
+                  // Only start trailing if profit reaches the minimum specified threshold
+                  if(profitInPoints >= InpStartTrailingPoints)
+                  {
+                     // Calculate the potential new Stop Loss based on current price and trailing distance
+                     double newSL = currentMarketPrice + (InpTrailingStopPoints * point);
+                     newSL = NormalizeDouble(newSL, _Digits); // Normalize to symbol's digit precision
+
+                     // Conditions for updating SL:
+                     // 1. New SL must be more favorable (lower) than the current SL.
+                     // 2. If current SL was 0 (not set), the new SL must be below the open price to be valid.
+                     if(newSL < currentSL || (currentSL == 0.0 && newSL < openPrice)) 
+                     {
+                        bool stepOk = false;
+                        // If SL was initially 0, the first valid adjustment is always okay (bypasses step check).
+                        if (currentSL == 0.0)
+                        {
+                           stepOk = true; 
+                        }
+                        else
+                        {
+                           // Otherwise, ensure the adjustment is at least by InpTrailingStepPoints
+                           stepOk = ((currentSL - newSL) / point) >= InpTrailingStepPoints;
+                        }
+                        
+                        if(stepOk)
+                        {
+                           if(tradeExit.PositionModify(ticket, newSL, currentTP))
+                           {
+                              PrintFormat("Trailing Stop (SELL) activated for #%d. New SL: %.5f, Profit Points: %.1f", ticket, newSL, profitInPoints);
+                           }
+                           else
+                           {
+                              PrintFormat("Error modifying position #%d for Trailing Stop (SELL). Retcode: %d. SL: %.5f, TP: %.5f",
+                                          ticket, tradeExit.ResultRetcode(), newSL, currentTP);
+                           }
+                        }
+                     }
+                  }
+               }
+            } // --- End of Trailing Stop Logic ---
+
             // Get current standard MACD state for exit confirmation
             double macdMainLine_Exit[1];
             double macdSignalLine_Exit[1];
@@ -597,63 +873,62 @@ void OnTick()
             if(CopyBuffer(hStandardMACD, MAIN_LINE, 0, 1, macdMainLine_Exit) > 0 &&
                CopyBuffer(hStandardMACD, SIGNAL_LINE, 0, 1, macdSignalLine_Exit) > 0)
             {
-                PrintFormat("OnTick: Exit Logic for Position #%d (%s) - MACD Main: %.5f, Signal: %.5f",
-                            ticket, EnumToString(positionType), macdMainLine_Exit[0], macdSignalLine_Exit[0]);
+               PrintFormat("OnTick: Exit Logic for Position #%d (%s) - MACD Main: %.5f, Signal: %.5f",
+                           ticket, EnumToString(positionType), macdMainLine_Exit[0], macdSignalLine_Exit[0]);
 
-                if(positionType == POSITION_TYPE_BUY && macdMainLine_Exit[0] < macdSignalLine_Exit[0]) 
-                {
-                    closeSignal = true;
-                    closeReason = "MACD Main < Signal (Continuous State)";
-                    PrintFormat("OnTick: Exit Signal for BUY Position #%d due to %s.", ticket, closeReason);
-                }
-                else if(positionType == POSITION_TYPE_SELL && macdMainLine_Exit[0] > macdSignalLine_Exit[0])
-                {
-                    closeSignal = true;
-                    closeReason = "MACD Main > Signal (Continuous State)";
-                    PrintFormat("OnTick: Exit Signal for SELL Position #%d due to %s.", ticket, closeReason);
-                }
-                else
-                {
-                    // No MACD-based exit signal for this position based on continuous state
-                    // PrintFormat("OnTick: Exit Logic - Position #%d (%s): No MACD state change for exit. Main: %.5f, Signal: %.5f", 
-                    //             ticket, EnumToString(positionType), macdMainLine_Exit[0], macdSignalLine_Exit[0]); // Optional: can be noisy
-                }
+               if(positionType == POSITION_TYPE_BUY && macdMainLine_Exit[0] < macdSignalLine_Exit[0]) 
+               {
+                  closeSignal = true;
+                  closeReason = "MACD Main < Signal (Continuous State)";
+                  PrintFormat("OnTick: Exit Signal for BUY Position #%d due to %s.", ticket, closeReason);
+               }
+               else if(positionType == POSITION_TYPE_SELL && macdMainLine_Exit[0] > macdSignalLine_Exit[0])
+               {
+                  closeSignal = true;
+                  closeReason = "MACD Main > Signal (Continuous State)";
+                  PrintFormat("OnTick: Exit Signal for SELL Position #%d due to %s.", ticket, closeReason);
+               }
+               else
+               {
+                  // No MACD-based exit signal for this position based on continuous state
+                  // PrintFormat("OnTick: Exit Logic - Position #%d (%s): No MACD state change for exit. Main: %.5f, Signal: %.5f", 
+                  //             ticket, EnumToString(positionType), macdMainLine_Exit[0], macdSignalLine_Exit[0]); // Optional: can be noisy
+               }
             }
             else
             {
-                PrintFormat("OnTick: Failed to copy standard MACD lines for Exit check on position #%d.", ticket);
-                // continue; // Decide if we should skip closing attempt or proceed without MACD check if copy fails
-                             // For now, if MACD copy fails, closeSignal remains false, so no MACD-based exit.
+               PrintFormat("OnTick: Failed to copy standard MACD lines for Exit check on position #%d.", ticket);
+               // continue; // Decide if we should skip closing attempt or proceed without MACD check if copy fails
+               // For now, if MACD copy fails, closeSignal remains false, so no MACD-based exit.
             }
 
             // The existing 'if(closeSignal)' block with 'tradeExit.PositionClose(ticket)' will use the new closeSignal.
             if(closeSignal)
-                 {
-                  if(tradeExit.PositionClose(ticket))
-                    {
-                     PrintFormat("Closed position #%d (%s) due to %s. Result: %d, Ret: %d",
-                                 ticket, EnumToString(positionType), closeReason, tradeExit.ResultDeal(), tradeExit.ResultRetcode());
-                     // Potentially reset hasTradedThisBar if you want to allow new entries on the same bar after an exit.
-                     // For this EA, default is to wait for next bar.
-                    }
-                  else
-                    {
-                     PrintFormat("Failed to close position #%d (%s) for %s. Error: %d, Retcode: %d",
-                                 ticket, EnumToString(positionType), closeReason, tradeExit.ResultDeal(), tradeExit.ResultRetcode());
-                    }
-                 }
-              }
-            else
-              {
-               // Print("Failed to copy MACD Crossover State for exit check on ticket: ", ticket);
-               continue; 
-              }
-           }
-        }
-     }
+            {
+               if(tradeExit.PositionClose(ticket))
+               {
+                  PrintFormat("Closed position #%d (%s) due to %s. Result: %d, Ret: %d",
+                              ticket, EnumToString(positionType), closeReason, tradeExit.ResultDeal(), tradeExit.ResultRetcode());
+                  // Potentially reset hasTradedThisBar if you want to allow new entries on the same bar after an exit.
+                  // For this EA, default is to wait for next bar.
+               }
+               else
+               {
+                  PrintFormat("Failed to close position #%d (%s) for %s. Error: %d, Retcode: %d",
+                              ticket, EnumToString(positionType), closeReason, tradeExit.ResultDeal(), tradeExit.ResultRetcode());
+               }
+            }
+         }
+         else
+         {
+            // Print("Failed to copy MACD Crossover State for exit check on ticket: ", ticket);
+            continue; 
+         }
+      }
+   }
+}
 //+------------------------------------------------------------------+
 //| Custom functions (will be added later)                           |
 //+------------------------------------------------------------------+
 
 // End of PerfectScalp.mq5
-
