@@ -29,9 +29,9 @@
 //+----------------------------------------------+
 //|  Indicator input parameters                  |
 //+----------------------------------------------+
-input int    Period1 = 3;        // Depth
+input int    Period1 = 2;        // Depth
 input int    Deviation1 = 1;     // Deviation (points)
-input int    Backstep1 = 2;      // Back Step
+input int    Backstep1 = 1;      // Back Step
 input int    HighSymbol1 = 159;  // High arrow symbol
 input int    LowSymbol1 = 159;   // Low arrow symbol
 input bool   EnableAlerts = true;// Enable Sound Alerts
