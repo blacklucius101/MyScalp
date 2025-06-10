@@ -10,15 +10,18 @@
 
 //--- Input parameters for trade levels
 input group "Trade Levels (in Points)"
-input int InpTakeProfit = 10000;       // Take Profit in points
+input int InpTakeProfit = 5000;       // Take Profit in points
 input int InpStopLoss = 70000;         // Stop Loss in points
-input int InpTrailingStop = 1;       // Trailing Stop in points (0 = disabled)
+input int InpTrailingStop = 0;       // Trailing Stop in points (0 = disabled)
 input int InpTrailingStep = 1;        // Trailing Step in points
 input int InpStartTrailingPoint = 5001; // Start Trailing Point in points
 
 //--- Input parameter for lot size
 input group "Lot Size Management"
 input double InpLotSize = 0.0;        // Lot size (0.0 = dynamic calculation)
+
+input group "Signal Line Settings"; // New group for these settings
+input double InpSignalThreshold = 61.8; // Threshold percentage (0-100)
 
 //--- Input parameter for trade execution type
 input group "Trade Execution"
@@ -34,6 +37,16 @@ input EnumExecutionType InpExecutionType = EXECUTE_IMMEDIATE; // Trade execution
 // Include Trade library
 #include <Trade\Trade.mqh>
 
+//--- Data structure for signal tracking
+struct SignalData
+  {
+   datetime candleTime;     // Time of the signal candle
+   double   triggerPrice;   // Price where arrow appeared (high for bearish, low for bullish)
+   double   thresholdPrice; // Calculated threshold price
+   bool     signalUsed;     // Flag if signal has been used
+   double   candleRange;    // Range of the signal candle (high-low)
+  };
+
 // Global instance of CTrade
 CTrade trade;
 long जी_EXPERT_MAGIC_NUMBER = 198705; // Example Magic Number
@@ -44,12 +57,25 @@ string g_sellButtonName = "SellButton";
 string g_execTypeButtonName = "ExecTypeButton"; // Name for the new execution type toggle button
 string g_pendingIndicatorName = "PendingTradeIndicator"; // Name for the pending trade visual indicator
 
+//--- Line properties for retracement levels
+const string g_bullishEntryLinePrefix = "BullishEntryTA_";
+const string g_bearishEntryLinePrefix = "BearishEntryTA_";
+const color  g_bullishLineColor = clrForestGreen;
+const color  g_bearishLineColor = clrFireBrick;
+const int    g_lineWidth = 2; // Changed from 5 to 2 for less visual clutter
+const ENUM_LINE_STYLE g_lineStyle = STYLE_DOT;
+const int    g_lineDurationBars = 2; // How many bars the line should span (increased from 5 for better visibility)
+
 //--- Global variables for pending "next candle" trades
 ENUM_ORDER_TYPE g_pendingOrderType = WRONG_VALUE; // Stores pending order type
 bool g_tradeOnNextCandlePending = false;     // Flag for pending next candle trade
 
 //--- Global variable to hold the current execution type state
 EnumExecutionType g_currentExecutionType;
+
+SignalData g_arrowBearish;    // Stores bearish signal data
+SignalData g_arrowBullish;    // Stores bullish signal data
+int g_zzSemaforHandle = INVALID_HANDLE; // Handle for Single_Level_ZZ_Semafor indicator
 //+------------------------------------------------------------------+
 //| Execute Trade Operation                                          |
 //+------------------------------------------------------------------+
@@ -232,6 +258,177 @@ double CalculateLotSize()
   }
 
 //+------------------------------------------------------------------+
+//| Reset signal data structure                                      |
+//+------------------------------------------------------------------+
+void ResetSignalDataTA(SignalData &data)
+  {
+   data.candleTime = 0;
+   data.triggerPrice = 0;
+   data.thresholdPrice = 0;
+   data.signalUsed = false;
+   data.candleRange = 0;
+  }
+
+//+------------------------------------------------------------------+
+//| Draw entry level line                                            |
+//+------------------------------------------------------------------+
+void DrawEntryLineTA(string prefix, datetime signalTime, double price, color lineColor)
+  {
+   string lineName = prefix + TimeToString(signalTime, TIME_MINUTES); // Using TIME_MINUTES for unique names per bar
+
+   // Calculate end time (signal time + duration in bars on the current chart timeframe)
+   // PeriodSeconds() returns the number of seconds in the current chart period.
+   datetime endTime = signalTime + PeriodSeconds() * g_lineDurationBars;
+
+   // Delete old line if exists to prevent duplicates if called rapidly for the same signalTime
+   if(ObjectFind(0, lineName) != -1)
+     {
+      ObjectDelete(0, lineName);
+     }
+
+   // Create the trend line
+   if(!ObjectCreate(0, lineName, OBJ_TREND, 0, signalTime, price, endTime, price))
+     {
+      Print("Failed to create entry line '", lineName, "'! Error: ", GetLastError());
+      return;
+     }
+
+   ObjectSetInteger(0, lineName, OBJPROP_COLOR, lineColor);
+   ObjectSetInteger(0, lineName, OBJPROP_WIDTH, g_lineWidth);
+   ObjectSetInteger(0, lineName, OBJPROP_STYLE, g_lineStyle);
+   ObjectSetInteger(0, lineName, OBJPROP_RAY_RIGHT, false); // Ensure line doesn't extend indefinitely
+   ObjectSetInteger(0, lineName, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, lineName, OBJPROP_BACK, true); // Draw behind price chart
+   ObjectSetString(0, lineName, OBJPROP_TOOLTIP, prefix + " Level"); // Add a tooltip
+
+   // ChartRedraw(); // Redraw is handled by the calling function (e.g., ProcessNewBarTA) if needed
+  }
+
+//+------------------------------------------------------------------+
+//| Clean up old entry lines                                         |
+//+------------------------------------------------------------------+
+void CleanUpOldLinesTA()
+  {
+   datetime currentTime = TimeCurrent();
+   // Calculate expiration time: lines older than 'currentTime - (PeriodSeconds() * g_lineDurationBars)' are considered expired.
+   // A small buffer (e.g., 1 bar) can be added to ensure lines are visible for their full duration.
+   datetime expirationTimeThreshold = currentTime - (PeriodSeconds() * (g_lineDurationBars + 1));
+
+   int totalObjects = ObjectsTotal(0, 0, OBJ_TREND); // Only iterate over OBJ_TREND objects for efficiency
+   for(int i = totalObjects - 1; i >= 0; i--)
+     {
+      string name = ObjectName(0, i, 0, OBJ_TREND);
+      if(StringFind(name, g_bullishEntryLinePrefix) == 0 || StringFind(name, g_bearishEntryLinePrefix) == 0)
+        {
+         // ObjectGetInteger(0, name, OBJPROP_TIME, 0) gets the time of the first point of the trend line.
+         datetime lineCreationTime = (datetime)ObjectGetInteger(0, name, OBJPROP_TIME, 0);
+         if(lineCreationTime < expirationTimeThreshold)
+           {
+            ObjectDelete(0, name);
+           }
+        }
+     }
+   // ChartRedraw(); // Optional: Redraw if lines were deleted. Often called by the main loop (OnTick) anyway.
+  }
+
+//+------------------------------------------------------------------+
+//| Process New Bar for Signal Line Drawing                          |
+//+------------------------------------------------------------------+
+void ProcessNewBarTA()
+  {
+   if(g_zzSemaforHandle == INVALID_HANDLE)
+     {
+      // Print("ProcessNewBarTA: ZZ Semafor Indicator handle is invalid. Cannot process signals.");
+      return;
+     }
+
+   // We're interested in the previous candle (c1) which just closed
+   int c1 = 1; // Index of previous candle
+
+   // Get candle data for c1 (signal candle)
+   double c1High = iHigh(_Symbol, _Period, c1);
+   double c1Low = iLow(_Symbol, _Period, c1);
+   datetime c1Time = iTime(_Symbol, _Period, c1);
+   double c1Range = c1High - c1Low;
+
+   if(c1Range <= 0)
+     {
+      // Print("ProcessNewBarTA: Candle range for bar at ", TimeToString(c1Time), " is zero or negative. Skipping line processing for this bar.");
+      return;
+     }
+
+   // --- Actual Signal Detection using Single_Level_ZZ_Semafor ---
+   double highArrowBuffer[];
+   double lowArrowBuffer[];
+   bool newBearishSignal = false;
+   bool newBullishSignal = false;
+
+   // Attempt to copy data for the high arrow (bearish signal, buffer 1)
+   if(CopyBuffer(g_zzSemaforHandle, 1, c1, 1, highArrowBuffer) == 1)
+     {
+      if(highArrowBuffer[0] > 0) // Signal if value is greater than 0
+        {
+         newBearishSignal = true;
+        }
+     }
+   else
+     {
+      Print("ProcessNewBarTA: Error copying high arrow buffer from ZZ Semafor. Error: ", GetLastError());
+     }
+
+   // Attempt to copy data for the low arrow (bullish signal, buffer 0)
+   if(CopyBuffer(g_zzSemaforHandle, 0, c1, 1, lowArrowBuffer) == 1)
+     {
+      if(lowArrowBuffer[0] > 0) // Signal if value is greater than 0
+        {
+         newBullishSignal = true;
+        }
+     }
+   else
+     {
+      Print("ProcessNewBarTA: Error copying low arrow buffer from ZZ Semafor. Error: ", GetLastError());
+     }
+   // --- End of Actual Signal Detection ---
+
+   bool lineDrawn = false; // Flag to check if we need to redraw chart
+
+   // Check for bearish signal (high arrow from indicator)
+   if(newBearishSignal)
+     {
+      g_arrowBearish.signalUsed = false; // Reset flag
+
+      g_arrowBearish.candleTime = c1Time;
+      g_arrowBearish.triggerPrice = c1High; // ZZ_Semafor_EA uses c1High as trigger for bearish
+      g_arrowBearish.candleRange = c1Range;
+      g_arrowBearish.thresholdPrice = NormalizeDouble(c1High - ((InpSignalThreshold / 100.0) * c1Range), _Digits);
+
+      DrawEntryLineTA(g_bearishEntryLinePrefix, c1Time, g_arrowBearish.thresholdPrice, g_bearishLineColor);
+      Print("ProcessNewBarTA: New Bearish Signal (ZZ Semafor) at ", TimeToString(c1Time), ". Threshold: ", DoubleToString(g_arrowBearish.thresholdPrice, _Digits));
+      lineDrawn = true;
+     }
+
+   // Check for bullish signal (low arrow from indicator)
+   if(newBullishSignal)
+     {
+      g_arrowBullish.signalUsed = false; // Reset flag
+
+      g_arrowBullish.candleTime = c1Time;
+      g_arrowBullish.triggerPrice = c1Low; // ZZ_Semafor_EA uses c1Low as trigger for bullish
+      g_arrowBullish.candleRange = c1Range;
+      g_arrowBullish.thresholdPrice = NormalizeDouble(c1Low + ((InpSignalThreshold / 100.0) * c1Range), _Digits);
+      
+      DrawEntryLineTA(g_bullishEntryLinePrefix, c1Time, g_arrowBullish.thresholdPrice, g_bullishLineColor);
+      Print("ProcessNewBarTA: New Bullish Signal (ZZ Semafor) at ", TimeToString(c1Time), ". Threshold: ", DoubleToString(g_arrowBullish.thresholdPrice, _Digits));
+      lineDrawn = true;
+     }
+   
+   if(lineDrawn)
+     {
+      ChartRedraw(); // Redraw chart if any line was drawn
+     }
+  }
+
+//+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
@@ -302,6 +499,23 @@ int OnInit()
 
 //--- Initialization successful
    Print("ZZ_Semafor_Visual_EA initialized successfully. Magic Number: ", जी_EXPERT_MAGIC_NUMBER);
+
+//--- Load Custom Indicator for signals
+   g_zzSemaforHandle = iCustom(NULL, 0, "Custom\\Single_Level_ZZ_Semafor");
+   if(g_zzSemaforHandle == INVALID_HANDLE)
+     {
+      Print("Error: Failed to load Single_Level_ZZ_Semafor indicator. EA cannot continue.");
+      // Optional: Alert the user
+      // Alert("Failed to load Single_Level_ZZ_Semafor. Please ensure it is in the MQL5\Indicators\Custom directory.");
+      return(INIT_FAILED);
+     }
+   else
+     {
+      Print("Single_Level_ZZ_Semafor indicator loaded successfully. Handle: ", g_zzSemaforHandle);
+     }
+//--- Initialize signal data structures
+   ResetSignalDataTA(g_arrowBearish);
+   ResetSignalDataTA(g_arrowBullish);
    return(INIT_SUCCEEDED);
   }
 //+------------------------------------------------------------------+
@@ -309,12 +523,21 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
   {
-//--- Clean up created objects
+   //--- Release custom indicator handle
+   if(g_zzSemaforHandle != INVALID_HANDLE)
+     {
+      IndicatorRelease(g_zzSemaforHandle);
+      Print("Single_Level_ZZ_Semafor indicator released. Handle: ", g_zzSemaforHandle);
+      g_zzSemaforHandle = INVALID_HANDLE; // Reset handle after release
+     }
+
+   //--- Clean up created objects
    ObjectDelete(0, g_buyButtonName);
    ObjectDelete(0, g_sellButtonName);
    ObjectDelete(0, g_execTypeButtonName); // Delete the execution type button
    ObjectDelete(0, g_pendingIndicatorName); // Delete the pending trade indicator
-   ChartRedraw();
+   
+   // ChartRedraw(); // Not strictly necessary in OnDeinit after object deletions, but doesn't harm.
   }
 //+------------------------------------------------------------------+
 //| Trailing Stop Logic                                              |
@@ -338,7 +561,10 @@ void TrailingStopModifyOrders()
          if(positionType == POSITION_TYPE_BUY)
            {
             currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-            if(currentPrice == 0) continue; // Skip if price is not available
+            if(currentPrice == 0) 
+              {
+               continue; // Skip if price is not available
+              }
 
             // Check if position is profitable enough to start trailing
             if(currentPrice >= openPrice + InpStartTrailingPoint * _Point)
@@ -366,7 +592,11 @@ void TrailingStopModifyOrders()
          else if(positionType == POSITION_TYPE_SELL)
            {
             currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK); // Correct: Use ASK to check against SELL position's profit
-            if(currentPrice == 0) { Print("TrailingStopModifyOrders: Could not get ASK price for SELL position #", positionTicket); continue; }
+            if(currentPrice == 0) 
+              { 
+               Print("TrailingStopModifyOrders: Could not get ASK price for SELL position #", positionTicket); 
+               continue; 
+              }
 
 
             // Check if position is profitable enough to start trailing
@@ -405,18 +635,20 @@ datetime g_lastBarTime = 0; // Stores the time of the last processed bar for new
 
 void OnTick()
   {
-//--- Safety check for pending indicator color
-   // Check if object exists to prevent errors if OnInit didn't complete fully or object was somehow deleted
+   //--- Clean up old entry lines first
+   CleanUpOldLinesTA(); // Call this on every tick or less frequently if performance is an issue
+
+   //--- Safety check for pending indicator color
    if(ObjectFind(0,g_pendingIndicatorName) == 0) 
      {
       if (!g_tradeOnNextCandlePending && ObjectGetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, 0) != clrLightGray)
         {
          ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
-         ChartRedraw();
+         // ChartRedraw(); // Avoid redundant redraws, ProcessNewBarTA or other logic might redraw
         }
      }
 
-//--- New bar detection for "Execute on Next Candle"
+   //--- New bar detection
    datetime newBarDTime = (datetime)SeriesInfoInteger(_Symbol, _Period, SERIES_LASTBAR_DATE);
    bool isNewBar = false;
    if(newBarDTime != g_lastBarTime)
@@ -427,21 +659,26 @@ void OnTick()
 
    if(isNewBar)
      {
+      Print("New bar detected at ", TimeToString(newBarDTime));
+      // Process new bar for line drawing
+      ProcessNewBarTA(); // This function will also handle ChartRedraw if lines are drawn
+
+      // Process pending "next candle" trade
       if(g_tradeOnNextCandlePending && g_pendingOrderType != WRONG_VALUE)
         {
-         Print("New bar detected. Executing pending order: ", EnumToString(g_pendingOrderType));
+         Print("Executing pending order: ", EnumToString(g_pendingOrderType));
          ExecuteTrade(g_pendingOrderType);
-         // ExecuteTrade will reset g_tradeOnNextCandlePending and g_pendingOrderType
+         // ExecuteTrade will reset flags and indicator, and redraws.
         }
      }
    
-//--- Manage Trailing Stops for open positions
+   //--- Manage Trailing Stops for open positions
    TrailingStopModifyOrders();
-
-//--- Visual line updates (placeholders) - Removed
-   // Placeholder for actual price determination logic based on ZZ_Semafor_EA
-   // For now, draw dummy lines for testing - These lines have been removed.
    
+   // If no other function called ChartRedraw, and it's needed, call it here.
+   // However, CleanUpOldLinesTA and ProcessNewBarTA (if lines drawn) or ExecuteTrade should handle it.
+   // Consider if a final ChartRedraw() is needed if none of the above conditions trigger one.
+   // For now, assume other functions manage redraws appropriately.
   }
 //+------------------------------------------------------------------+
 //| ChartEvent function                                              |
