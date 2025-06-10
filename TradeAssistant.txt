@@ -1,0 +1,545 @@
+//+------------------------------------------------------------------+
+//|                                               TradeAssistant.mq5 |
+//|                                                      @mobilebass |
+//|                                             https://www.mql5.com |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2023, MetaQuotes Ltd."
+#property link      "https://www.mql5.com"
+#property version   "1.00"
+#property description "TradeAssistant"
+
+//--- Input parameters for trade levels
+input group "Trade Levels (in Points)"
+input int InpTakeProfit = 10000;       // Take Profit in points
+input int InpStopLoss = 70000;         // Stop Loss in points
+input int InpTrailingStop = 1;       // Trailing Stop in points (0 = disabled)
+input int InpTrailingStep = 1;        // Trailing Step in points
+input int InpStartTrailingPoint = 5001; // Start Trailing Point in points
+
+//--- Input parameter for lot size
+input group "Lot Size Management"
+input double InpLotSize = 0.0;        // Lot size (0.0 = dynamic calculation)
+
+//--- Input parameter for trade execution type
+input group "Trade Execution"
+enum EnumExecutionType
+  {
+   EXECUTE_IMMEDIATE,     // Execute immediately on button press
+   EXECUTE_ON_NEXT_CANDLE // Execute on the open of the next candle
+  };
+input EnumExecutionType InpExecutionType = EXECUTE_IMMEDIATE; // Trade execution type
+
+//--- Input parameters for visual elements (e.g., button labels, colors) - to be added later if needed
+
+// Include Trade library
+#include <Trade\Trade.mqh>
+
+// Global instance of CTrade
+CTrade trade;
+long जी_EXPERT_MAGIC_NUMBER = 198705; // Example Magic Number
+
+//--- Global variables for UI element names
+string g_buyButtonName = "BuyButton";
+string g_sellButtonName = "SellButton";
+string g_execTypeButtonName = "ExecTypeButton"; // Name for the new execution type toggle button
+string g_pendingIndicatorName = "PendingTradeIndicator"; // Name for the pending trade visual indicator
+
+//--- Global variables for pending "next candle" trades
+ENUM_ORDER_TYPE g_pendingOrderType = WRONG_VALUE; // Stores pending order type
+bool g_tradeOnNextCandlePending = false;     // Flag for pending next candle trade
+
+//--- Global variable to hold the current execution type state
+EnumExecutionType g_currentExecutionType;
+//+------------------------------------------------------------------+
+//| Execute Trade Operation                                          |
+//+------------------------------------------------------------------+
+void ExecuteTrade(ENUM_ORDER_TYPE orderType)
+  {
+   // Initial assumption: a pending trade is being processed or an immediate trade is requested.
+   // Flags will be reset and indicator updated *after* the attempt or if pre-checks fail.
+
+   if(orderType != ORDER_TYPE_BUY && orderType != ORDER_TYPE_SELL)
+     {
+      Print("ExecuteTrade: Invalid order type specified.");
+      g_tradeOnNextCandlePending = false; 
+      g_pendingOrderType = WRONG_VALUE;
+      ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
+      ChartRedraw();
+      return;
+     }
+
+   double lot = CalculateLotSize();
+   if(lot <= 0)
+     {
+      Print("ExecuteTrade: Invalid lot size calculated: ", lot);
+      g_tradeOnNextCandlePending = false; 
+      g_pendingOrderType = WRONG_VALUE;
+      ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
+      ChartRedraw();
+      return;
+     }
+
+   double price = 0.0;
+   double slPrice = 0.0;
+   double tpPrice = 0.0;
+   string comment = "";
+   bool tradeExecutedOrAttempted = false; // Flag to track if we proceed to reset flags and indicator
+
+   if(orderType == ORDER_TYPE_BUY)
+     {
+      price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      if(price == 0) 
+        { 
+         Print("ExecuteTrade: Could not get ASK price. Pending trade (if any) will remain for next attempt."); 
+         return; // Keep pending state, try again later
+        }
+      slPrice = (InpStopLoss > 0) ? price - InpStopLoss * _Point : 0.0;
+      tpPrice = (InpTakeProfit > 0) ? price + InpTakeProfit * _Point : 0.0;
+      comment = "Buy executed by EA";
+      Print("Attempting BUY: Lot=", lot, ", Price=", DoubleToString(price, _Digits), ", SL=", DoubleToString(slPrice, _Digits), ", TP=", DoubleToString(tpPrice, _Digits));
+      if(!trade.Buy(lot, _Symbol, price, slPrice, tpPrice, comment))
+        {
+         Print("Buy order failed: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
+        }
+      else
+        {
+         Print("Buy order successful. Position #", trade.ResultOrder());
+        }
+      tradeExecutedOrAttempted = true;
+     }
+   else if(orderType == ORDER_TYPE_SELL)
+     {
+      price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      if(price == 0) 
+        { 
+         Print("ExecuteTrade: Could not get BID price. Pending trade (if any) will remain for next attempt."); 
+         return; // Keep pending state, try again later
+        }
+      slPrice = (InpStopLoss > 0) ? price + InpStopLoss * _Point : 0.0;
+      tpPrice = (InpTakeProfit > 0) ? price - InpTakeProfit * _Point : 0.0;
+      comment = "Sell executed by EA";
+      Print("Attempting SELL: Lot=", lot, ", Price=", DoubleToString(price, _Digits), ", SL=", DoubleToString(slPrice, _Digits), ", TP=", DoubleToString(tpPrice, _Digits));
+      if(!trade.Sell(lot, _Symbol, price, slPrice, tpPrice, comment))
+        {
+         Print("Sell order failed: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
+        }
+      else
+        {
+         Print("Sell order successful. Position #", trade.ResultOrder());
+        }
+      tradeExecutedOrAttempted = true;
+     }
+
+   if(tradeExecutedOrAttempted)
+     {
+      // Reset pending flags as the trade was attempted (either successfully or not)
+      g_tradeOnNextCandlePending = false;
+      g_pendingOrderType = WRONG_VALUE;
+      // Reset the indicator color as the pending action is resolved
+      ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
+      ChartRedraw(); 
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| Create Button Object                                             |
+//+------------------------------------------------------------------+
+void CreateButton(string name, string text, int x, int y, int width, int height, color bgColor, color textColor, int corner = 0, int fontSize = 8) // CORNER_RIGHT_UPPER = 1 by default if not specified
+  {
+   if(ObjectFind(0, name) != 0) // If object doesn't exist
+     {
+      if(!ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0))
+        {
+         Print("Error creating button ", name, ": ", GetLastError());
+         return;
+        }
+     }
+
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, height);
+   ObjectSetInteger(0, name, OBJPROP_CORNER, corner);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bgColor);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, textColor);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, fontSize);
+   ObjectSetInteger(0, name, OBJPROP_STATE, 0); // false
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, 0); // false
+   ObjectSetInteger(0, name, OBJPROP_BACK, 0); // false - Keep button on top
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 0); // Typically 0 is foreground for buttons
+  }
+
+//+------------------------------------------------------------------+
+//| Calculate Lot Size                                               |
+//+------------------------------------------------------------------+
+double CalculateLotSize()
+  {
+   // If InpLotSize is explicitly set by input (greater than 0), use it after normalization.
+   if(InpLotSize > 0.0)
+     {
+      // Normalize user-defined lot size against symbol's volume constraints
+      double userLotSize = InpLotSize;
+      double volumeMin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+      double volumeMax = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+      double volumeStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+
+      // Adjust to minimum volume if user lot is too small
+      if(userLotSize < volumeMin) userLotSize = volumeMin;
+      // Adjust to maximum volume if user lot is too large
+      if(userLotSize > volumeMax) userLotSize = volumeMax;
+      
+      // Align to volume step
+      userLotSize = MathFloor(userLotSize / volumeStep) * volumeStep;
+      if (userLotSize < volumeMin) userLotSize = volumeMin; // Re-check after flooring
+
+      return(NormalizeDouble(userLotSize, 2)); // Standard normalization to 2 decimal places
+     }
+
+   // If InpLotSize is 0.0, calculate lot size based on account balance.
+   // Example: 0.01 lot for every 1000 units of account currency balance.
+   // This is a common but arbitrary rule; adjust the factor (e.g., 1000.0) as needed for your risk strategy.
+   double calculatedLotSize = AccountInfoDouble(ACCOUNT_BALANCE) / 1000.0;
+
+   // Get symbol volume information for dynamic calculation
+   double volumeMin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double volumeMax = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double volumeStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+
+   // Normalize calculated lot size
+   // Adjust to minimum volume if calculated lot is too small
+   if(calculatedLotSize < volumeMin)
+     {
+      calculatedLotSize = volumeMin;
+     }
+   // Adjust to maximum volume if calculated lot is too large
+   else if(calculatedLotSize > volumeMax)
+     {
+      calculatedLotSize = volumeMax;
+     }
+   // Align to volume step
+   else
+     {
+      // Round to the nearest step, then ensure it's not below min or above max
+      calculatedLotSize = MathRound(calculatedLotSize / volumeStep) * volumeStep;
+      if(calculatedLotSize < volumeMin) calculatedLotSize = volumeMin;
+      if(calculatedLotSize > volumeMax) calculatedLotSize = volumeMax;
+     }
+   
+   // Final normalization (usually to 2 decimal places for lots)
+   // The step calculation should ideally handle precision, but this is a safeguard.
+   return(NormalizeDouble(calculatedLotSize, 2));
+  }
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+//--- Check for valid point size
+   if(_Point == 0)
+     {
+      Print("Error: Invalid point size for symbol ", _Symbol, ". EA cannot continue.");
+      return(INIT_FAILED);
+     }
+
+//--- Check if trading is allowed for the account
+   if(!AccountInfoInteger(ACCOUNT_TRADE_ALLOWED))
+     {
+      Print("Trading is not allowed for this account.");
+      return(INIT_FAILED);
+     }
+
+//--- Check if the EA is allowed to trade
+   if(!MQLInfoInteger(MQL_TRADE_ALLOWED))
+     {
+      Print("Expert Advisor is not allowed to trade. Please check settings in Tools > Options > Expert Advisors.");
+      return(INIT_FAILED);
+     }
+
+//--- Set Expert Magic Number
+   trade.SetExpertMagicNumber(जी_EXPERT_MAGIC_NUMBER);
+   // Optional: Set slippage if you have an input for it
+   // trade.SetDeviationInPoints(InpSlippage); // Example if InpSlippage exists
+
+//--- Initialize global execution type state from input
+   g_currentExecutionType = InpExecutionType;
+
+//--- Create UI Elements
+   // CORNER_RIGHT_UPPER = 1 (Top-right corner of the chart)
+   CreateButton(g_buyButtonName, "BUY", 90, 50, 70, 25, clrGreen, clrWhite, 1); // X, Y, Width, Height, BgColor, TextColor, Corner
+   CreateButton(g_sellButtonName, "SELL", 10, 50, 70, 25, clrRed, clrWhite, 1);
+
+   // Determine initial text for the execution type button
+   string initialExecButtonText;
+   if (g_currentExecutionType == EXECUTE_IMMEDIATE)
+     initialExecButtonText = "Exec: Imm"; // Text for Immediate Execution
+   else
+     initialExecButtonText = "Exec: Next";  // Text for Next Candle Execution
+
+   // Create the execution type toggle button
+   CreateButton(g_execTypeButtonName, initialExecButtonText, 190, 50, 85, 25, clrBlue, clrWhite, 1, 8); // Name, Text, X, Y, Width, Height, BgColor, TextColor, Corner, FontSize
+
+//--- Create Pending Trade Indicator (Rectangle Label)
+   // Position to the right of ExecTypeButton: 250 (ExecX) + 85 (ExecWidth) + 10 (spacing) = 345
+   if(ObjectCreate(0, g_pendingIndicatorName, OBJ_RECTANGLE_LABEL, 0, 0, 0))
+     {
+      ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_CORNER, 1); // CORNER_RIGHT_UPPER
+      ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_XDISTANCE, 285); 
+      ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_YDISTANCE, 50);
+      ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_XSIZE, 25);
+      ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_YSIZE, 25);
+      ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray); // Initial neutral color
+      ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BORDER_TYPE, BORDER_FLAT); 
+      ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_SELECTABLE, 0); 
+      ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BACK, 0); 
+      ObjectSetString(0, g_pendingIndicatorName, OBJPROP_TOOLTIP, "Pending Trade Status");
+     }
+   else
+     {
+      Print("Error creating pending trade indicator object '", g_pendingIndicatorName, "': ", GetLastError());
+     }
+
+//--- Initialization successful
+   Print("ZZ_Semafor_Visual_EA initialized successfully. Magic Number: ", जी_EXPERT_MAGIC_NUMBER);
+   return(INIT_SUCCEEDED);
+  }
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+//--- Clean up created objects
+   ObjectDelete(0, g_buyButtonName);
+   ObjectDelete(0, g_sellButtonName);
+   ObjectDelete(0, g_execTypeButtonName); // Delete the execution type button
+   ObjectDelete(0, g_pendingIndicatorName); // Delete the pending trade indicator
+   ChartRedraw();
+  }
+//+------------------------------------------------------------------+
+//| Trailing Stop Logic                                              |
+//+------------------------------------------------------------------+
+void TrailingStopModifyOrders()
+  {
+   if(InpTrailingStop <= 0) // Trailing stop is disabled
+      return;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--) // Iterate through all open positions
+     {
+      if(PositionGetSymbol(i) == _Symbol) // Check if the position is for the current symbol
+        {
+         long positionTicket = PositionGetInteger(POSITION_TICKET);
+         ENUM_POSITION_TYPE positionType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+         double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+         double currentSl = PositionGetDouble(POSITION_SL);
+         double currentTp = PositionGetDouble(POSITION_TP); // Needed for PositionModify
+         double currentPrice = 0;
+
+         if(positionType == POSITION_TYPE_BUY)
+           {
+            currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+            if(currentPrice == 0) continue; // Skip if price is not available
+
+            // Check if position is profitable enough to start trailing
+            if(currentPrice >= openPrice + InpStartTrailingPoint * _Point)
+              {
+               double proposed_sl = currentPrice - InpTrailingStop * _Point;
+
+               // Ensure new SL is above open price
+               // Ensure new SL is an improvement over current SL
+               // Ensure new SL respects the trailing step if current SL exists
+               if(proposed_sl > openPrice &&
+                  (currentSl == 0 || proposed_sl > currentSl) &&
+                  (currentSl == 0 || (proposed_sl - currentSl) >= InpTrailingStep * _Point || InpTrailingStep == 0) ) // Allow update if step is 0
+                 {
+                  if(trade.PositionModify(positionTicket, proposed_sl, currentTp))
+                    {
+                     Print("Trailing stop updated for BUY #", positionTicket, " to ", DoubleToString(proposed_sl, _Digits));
+                    }
+                  else
+                    {
+                     Print("Error modifying trailing stop for BUY position #", positionTicket, ": ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
+                    }
+                 }
+              }
+           }
+         else if(positionType == POSITION_TYPE_SELL)
+           {
+            currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK); // Correct: Use ASK to check against SELL position's profit
+            if(currentPrice == 0) { Print("TrailingStopModifyOrders: Could not get ASK price for SELL position #", positionTicket); continue; }
+
+
+            // Check if position is profitable enough to start trailing
+            if(currentPrice <= openPrice - InpStartTrailingPoint * _Point)
+              {
+               // Calculate potential new SL: ASK price + TrailingStop distance
+               double proposed_sl = currentPrice + InpTrailingStop * _Point;
+
+               // Ensure new SL is below open price (making profit)
+               // Ensure new SL is an improvement (lower) over current SL (or current SL is 0)
+               // Ensure new SL respects the trailing step if current SL already exists (moves by at least InpTrailingStep)
+               if(proposed_sl < openPrice && // SL must be more favorable than open price
+                  (currentSl == 0 || proposed_sl < currentSl) && // Must be better than current SL, or current SL is not set
+                  (currentSl == 0 || (currentSl - proposed_sl) >= InpTrailingStep * _Point || InpTrailingStep == 0) ) // Step condition
+                 {
+                  // Attempt to modify the position's SL
+                  if(trade.PositionModify(positionTicket, proposed_sl, currentTp))
+                    {
+                     Print("Trailing stop updated for SELL position #", positionTicket, " to ", DoubleToString(proposed_sl, _Digits));
+                    }
+                  else
+                    {
+                     Print("Error modifying trailing stop for SELL position #", positionTicket, ": ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
+                    }
+                 }
+              }
+           }
+        }
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+datetime g_lastBarTime = 0; // Stores the time of the last processed bar for new bar detection
+
+void OnTick()
+  {
+//--- Safety check for pending indicator color
+   // Check if object exists to prevent errors if OnInit didn't complete fully or object was somehow deleted
+   if(ObjectFind(0,g_pendingIndicatorName) == 0) 
+     {
+      if (!g_tradeOnNextCandlePending && ObjectGetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, 0) != clrLightGray)
+        {
+         ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
+         ChartRedraw();
+        }
+     }
+
+//--- New bar detection for "Execute on Next Candle"
+   datetime newBarDTime = (datetime)SeriesInfoInteger(_Symbol, _Period, SERIES_LASTBAR_DATE);
+   bool isNewBar = false;
+   if(newBarDTime != g_lastBarTime)
+     {
+      isNewBar = true;
+      g_lastBarTime = newBarDTime;
+     }
+
+   if(isNewBar)
+     {
+      if(g_tradeOnNextCandlePending && g_pendingOrderType != WRONG_VALUE)
+        {
+         Print("New bar detected. Executing pending order: ", EnumToString(g_pendingOrderType));
+         ExecuteTrade(g_pendingOrderType);
+         // ExecuteTrade will reset g_tradeOnNextCandlePending and g_pendingOrderType
+        }
+     }
+   
+//--- Manage Trailing Stops for open positions
+   TrailingStopModifyOrders();
+
+//--- Visual line updates (placeholders) - Removed
+   // Placeholder for actual price determination logic based on ZZ_Semafor_EA
+   // For now, draw dummy lines for testing - These lines have been removed.
+   
+  }
+//+------------------------------------------------------------------+
+//| ChartEvent function                                              |
+//+------------------------------------------------------------------+
+void OnChartEvent(const int id,
+                  const long &lparam,
+                  const double &dparam,
+                  const string &sparam)
+  {
+//--- handle chart events
+   if(id == CHARTEVENT_OBJECT_CLICK)
+     {
+      // Reset button state immediately after click
+      ObjectSetInteger(0, sparam, OBJPROP_STATE, 0); // false
+      ChartRedraw();
+
+      if(sparam == g_buyButtonName)
+        {
+         // Print message now uses g_currentExecutionType, which is good.
+         Print("Buy button clicked. Execution Type: ", EnumToString(g_currentExecutionType)); 
+         if(g_currentExecutionType == EXECUTE_IMMEDIATE) // Condition already uses g_currentExecutionType
+           {
+            ExecuteTrade(ORDER_TYPE_BUY);
+           }
+         else // EXECUTE_ON_NEXT_CANDLE
+           {
+            if(g_tradeOnNextCandlePending && g_pendingOrderType == ORDER_TYPE_SELL)
+              {
+               Print("A Sell order is already pending for the next candle. Cannot set a Buy order simultaneously.");
+              }
+            else
+              {
+               g_tradeOnNextCandlePending = true;
+               g_pendingOrderType = ORDER_TYPE_BUY;
+               ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrGreen);
+               Print("Buy order armed. Will execute on the next candle open.");
+              }
+           }
+        }
+      else if(sparam == g_sellButtonName)
+        {
+         // Print message now uses g_currentExecutionType, which is good.
+         Print("Sell button clicked. Execution Type: ", EnumToString(g_currentExecutionType));
+         if(g_currentExecutionType == EXECUTE_IMMEDIATE) // Condition already uses g_currentExecutionType
+           {
+            ExecuteTrade(ORDER_TYPE_SELL); // ExecuteTrade will reset indicator to gray
+           }
+         else // EXECUTE_ON_NEXT_CANDLE
+           {
+            if(g_tradeOnNextCandlePending && g_pendingOrderType == ORDER_TYPE_BUY)
+              {
+               Print("A Buy order is already pending for the next candle. Cannot set a Sell order simultaneously. Current pending Buy indicator remains (Green).");
+              }
+            else
+              {
+               g_tradeOnNextCandlePending = true;
+               g_pendingOrderType = ORDER_TYPE_SELL;
+               ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrRed);
+               Print("Sell order armed. Will execute on the next candle open.");
+              }
+           }
+        }
+      else if(sparam == g_execTypeButtonName)
+        {
+         // Store old type to know if we are switching *from* NextCandle or *to* NextCandle
+         EnumExecutionType previousExecutionType = g_currentExecutionType;
+         
+         // Toggle the execution type state
+         if(g_currentExecutionType == EXECUTE_IMMEDIATE)
+           {
+            g_currentExecutionType = EXECUTE_ON_NEXT_CANDLE;
+            ObjectSetString(0, g_execTypeButtonName, OBJPROP_TEXT, "Exec: Next");
+            Print("Execution type changed to: Next Candle");
+            // If switching to NextCandle and nothing is currently pending, ensure indicator is neutral gray.
+            // If a trade becomes pending later (by clicking Buy/Sell), it will turn Red/Green.
+            if (!g_tradeOnNextCandlePending)
+              {
+               ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
+              }
+           }
+         else // Current was EXECUTE_ON_NEXT_CANDLE, now switching to EXECUTE_IMMEDIATE
+           {
+            g_currentExecutionType = EXECUTE_IMMEDIATE;
+            ObjectSetString(0, g_execTypeButtonName, OBJPROP_TEXT, "Exec: Imm");
+            Print("Execution type changed to: Immediate");
+
+            // If a trade was pending from the previous NextCandle mode, cancel it and reset indicator.
+            if (g_tradeOnNextCandlePending) 
+              {
+               ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
+               g_tradeOnNextCandlePending = false; // Cancel the pending trade
+               g_pendingOrderType = WRONG_VALUE;
+               Print("Pending next candle trade automatically cancelled: mode switched to Immediate.");
+              }
+           }
+         // ChartRedraw() is called at the start of CHARTEVENT_OBJECT_CLICK, which covers button text and indicator color changes.
+         // No need for an explicit ChartRedraw() here unless there's a specific reason for immediate visual feedback before other logic.
+        }
+     }
+  }
+//+------------------------------------------------------------------+
