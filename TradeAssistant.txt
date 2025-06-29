@@ -60,11 +60,11 @@ string g_pendingIndicatorName = "PendingTradeIndicator"; // Name for the pending
 //--- Line properties for retracement levels
 const string g_bullishEntryLinePrefix = "BullishEntryTA_";
 const string g_bearishEntryLinePrefix = "BearishEntryTA_";
-const color  g_bullishLineColor = clrForestGreen;
-const color  g_bearishLineColor = clrFireBrick;
-const int    g_lineWidth = 2; // Changed from 5 to 2 for less visual clutter
+const color  g_bullishLineColor = clrAqua;
+const color  g_bearishLineColor = clrMagenta;
+const int    g_lineWidth = 1; // Changed from 5 to 2 for less visual clutter
 const ENUM_LINE_STYLE g_lineStyle = STYLE_DOT;
-const int    g_lineDurationBars = 2; // How many bars the line should span (increased from 5 for better visibility)
+const int    g_lineDurationBars = 1; // How many bars the line should span (increased from 5 for better visibility)
 
 //--- Global variables for pending "next candle" trades
 ENUM_ORDER_TYPE g_pendingOrderType = WRONG_VALUE; // Stores pending order type
@@ -105,7 +105,46 @@ void ExecuteTrade(ENUM_ORDER_TYPE orderType)
       return;
      }
 
-   double price = 0.0;
+   // Get previous candle data
+   double prevHigh = iHigh(_Symbol, _Period, 1);
+   double prevLow = iLow(_Symbol, _Period, 1);
+   double prevRange = prevHigh - prevLow;
+   
+   // Check retracement condition
+   double currentPrice = 0;
+   bool retracementConditionMet = false;
+   
+   if(orderType == ORDER_TYPE_BUY)
+   {
+      currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      if(currentPrice == 0) return;
+      
+      // BUY CONDITION: Price must rise ABOVE retracement level
+      double requiredRetracementPrice = prevLow + (InpSignalThreshold / 100.0) * prevRange;
+      retracementConditionMet = (currentPrice >= requiredRetracementPrice); // Changed to >=
+      
+      if(!retracementConditionMet)
+      {
+         Print("Buy condition not met: Need price >=", requiredRetracementPrice);
+         return;
+      }
+   }
+   else if(orderType == ORDER_TYPE_SELL)
+   {
+      currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      if(currentPrice == 0) return;
+      
+      // SELL condition: Price must drop BELOW retracement level
+      double requiredRetracementPrice = prevHigh - (InpSignalThreshold / 100.0) * prevRange;
+      retracementConditionMet = (currentPrice <= requiredRetracementPrice);
+      
+      if(!retracementConditionMet)
+      {
+         Print("Sell condition not met: Need price <=", requiredRetracementPrice);
+         return;
+      }
+   }
+
    double slPrice = 0.0;
    double tpPrice = 0.0;
    string comment = "";
@@ -113,17 +152,11 @@ void ExecuteTrade(ENUM_ORDER_TYPE orderType)
 
    if(orderType == ORDER_TYPE_BUY)
      {
-      price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-      if(price == 0) 
-        { 
-         Print("ExecuteTrade: Could not get ASK price. Pending trade (if any) will remain for next attempt."); 
-         return; // Keep pending state, try again later
-        }
-      slPrice = (InpStopLoss > 0) ? price - InpStopLoss * _Point : 0.0;
-      tpPrice = (InpTakeProfit > 0) ? price + InpTakeProfit * _Point : 0.0;
+      slPrice = (InpStopLoss > 0) ? currentPrice - InpStopLoss * _Point : 0.0;
+      tpPrice = (InpTakeProfit > 0) ? currentPrice + InpTakeProfit * _Point : 0.0;
       comment = "Buy executed by EA";
-      Print("Attempting BUY: Lot=", lot, ", Price=", DoubleToString(price, _Digits), ", SL=", DoubleToString(slPrice, _Digits), ", TP=", DoubleToString(tpPrice, _Digits));
-      if(!trade.Buy(lot, _Symbol, price, slPrice, tpPrice, comment))
+      Print("Attempting BUY: Lot=", lot, ", Price=", DoubleToString(currentPrice, _Digits), ", SL=", DoubleToString(slPrice, _Digits), ", TP=", DoubleToString(tpPrice, _Digits));
+      if(!trade.Buy(lot, _Symbol, currentPrice, slPrice, tpPrice, comment))
         {
          Print("Buy order failed: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
         }
@@ -135,17 +168,11 @@ void ExecuteTrade(ENUM_ORDER_TYPE orderType)
      }
    else if(orderType == ORDER_TYPE_SELL)
      {
-      price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      if(price == 0) 
-        { 
-         Print("ExecuteTrade: Could not get BID price. Pending trade (if any) will remain for next attempt."); 
-         return; // Keep pending state, try again later
-        }
-      slPrice = (InpStopLoss > 0) ? price + InpStopLoss * _Point : 0.0;
-      tpPrice = (InpTakeProfit > 0) ? price - InpTakeProfit * _Point : 0.0;
+      slPrice = (InpStopLoss > 0) ? currentPrice + InpStopLoss * _Point : 0.0;
+      tpPrice = (InpTakeProfit > 0) ? currentPrice - InpTakeProfit * _Point : 0.0;
       comment = "Sell executed by EA";
-      Print("Attempting SELL: Lot=", lot, ", Price=", DoubleToString(price, _Digits), ", SL=", DoubleToString(slPrice, _Digits), ", TP=", DoubleToString(tpPrice, _Digits));
-      if(!trade.Sell(lot, _Symbol, price, slPrice, tpPrice, comment))
+      Print("Attempting SELL: Lot=", lot, ", Price=", DoubleToString(currentPrice, _Digits), ", SL=", DoubleToString(slPrice, _Digits), ", TP=", DoubleToString(tpPrice, _Digits));
+      if(!trade.Sell(lot, _Symbol, currentPrice, slPrice, tpPrice, comment))
         {
          Print("Sell order failed: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
         }
