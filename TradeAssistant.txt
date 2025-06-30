@@ -341,7 +341,7 @@ void CleanUpOldLinesTA()
    datetime currentTime = TimeCurrent();
    // Calculate expiration time: lines older than 'currentTime - (PeriodSeconds() * g_lineDurationBars)' are considered expired.
    // A small buffer (e.g., 1 bar) can be added to ensure lines are visible for their full duration.
-   datetime expirationTimeThreshold = currentTime - (PeriodSeconds() * (g_lineDurationBars + 1));
+   datetime expirationTimeThreshold = currentTime - (PeriodSeconds() * (g_lineDurationBars + 2));
 
    int totalObjects = ObjectsTotal(0, 0, OBJ_TREND); // Only iterate over OBJ_TREND objects for efficiency
    for(int i = totalObjects - 1; i >= 0; i--)
