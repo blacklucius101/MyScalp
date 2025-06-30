@@ -335,29 +335,102 @@ void DrawEntryLineTA(string prefix, datetime signalTime, double price, color lin
 
 //+------------------------------------------------------------------+
 //| Clean up old entry lines                                         |
+//| This function deletes lines based on two conditions:             |
+//| 1. Expiry time is reached (line is older than g_lineDurationBars). |
+//| 2. The semafor arrow associated with the line has repainted      |
+//|    (i.e., is no longer present on the signal candle).            |
 //+------------------------------------------------------------------+
 void CleanUpOldLinesTA()
   {
    datetime currentTime = TimeCurrent();
-   // Calculate expiration time: lines older than 'currentTime - (PeriodSeconds() * g_lineDurationBars)' are considered expired.
-   // A small buffer (e.g., 1 bar) can be added to ensure lines are visible for their full duration.
-   datetime expirationTimeThreshold = currentTime - (PeriodSeconds() * (g_lineDurationBars + 2));
+   // Calculate expiration time: lines older than 'currentTime - (PeriodSeconds() * (g_lineDurationBars + buffer))' are considered expired.
+   // A small buffer (e.g., 2 bars) is added to ensure lines are visible for their intended duration
+   // and to account for timing differences in execution.
+   datetime expirationTimeThreshold = currentTime - (PeriodSeconds() * (g_lineDurationBars + 2)); // +2 bar buffer
 
    int totalObjects = ObjectsTotal(0, 0, OBJ_TREND); // Only iterate over OBJ_TREND objects for efficiency
-   for(int i = totalObjects - 1; i >= 0; i--)
+   bool chartNeedsRedraw = false; // Flag to indicate if a redraw might be needed (handled by OnTick)
+
+   for(int i = totalObjects - 1; i >= 0; i--) // Iterate backwards as we might delete objects
      {
       string name = ObjectName(0, i, 0, OBJ_TREND);
-      if(StringFind(name, g_bullishEntryLinePrefix) == 0 || StringFind(name, g_bearishEntryLinePrefix) == 0)
+      bool isBullishLine = (StringFind(name, g_bullishEntryLinePrefix) == 0);
+      bool isBearishLine = (StringFind(name, g_bearishEntryLinePrefix) == 0);
+
+      if(isBullishLine || isBearishLine)
         {
-         // ObjectGetInteger(0, name, OBJPROP_TIME, 0) gets the time of the first point of the trend line.
          datetime lineCreationTime = (datetime)ObjectGetInteger(0, name, OBJPROP_TIME, 0);
+         bool deleteLine = false;
+
+         // Condition 1: Expiry time reached
          if(lineCreationTime < expirationTimeThreshold)
            {
+            deleteLine = true;
+            Print("CleanUpOldLinesTA: Deleting line '", name, "' due to time expiration.");
+           }
+
+         // Condition 2: Semafor arrow repainted (only if not already marked for deletion by time)
+         if(!deleteLine && g_zzSemaforHandle != INVALID_HANDLE)
+           {
+            // Determine the bar index for lineCreationTime
+            int barShift = iBarShift(_Symbol, _Period, lineCreationTime);
+            if(barShift < 0) // Error or time too far in the past
+              {
+               // Print("CleanUpOldLinesTA: Could not find bar shift for line '", name, "' at time ", TimeToString(lineCreationTime), ". Skipping repaint check.");
+               continue; // Skip repaint check if barShift is invalid
+              }
+
+            double arrowValue = 0;
+            int bufferIndex = -1;
+
+            if(isBullishLine)
+              {
+               bufferIndex = 0; // Low arrow for bullish signal
+              }
+            else // isBearishLine
+              {
+               bufferIndex = 1; // High arrow for bearish signal
+              }
+
+            double tempBuffer[];
+            if(CopyBuffer(g_zzSemaforHandle, bufferIndex, barShift, 1, tempBuffer) == 1)
+              {
+               arrowValue = tempBuffer[0];
+              }
+            else
+              {
+               Print("CleanUpOldLinesTA: Error copying ZZ Semafor buffer for line '", name, "', barShift ", barShift, ". Error: ", GetLastError());
+               // Decide how to handle this error: skip check or assume repaint? For safety, let's skip.
+               continue; 
+              }
+            
+            // If arrowValue is 0 (or EMPTY_VALUE, though indicator usually plots > 0 for arrow)
+            // it means the semafor is no longer present at that bar on that buffer.
+            if(arrowValue == 0 || arrowValue == EMPTY_VALUE)
+              {
+               deleteLine = true;
+               Print("CleanUpOldLinesTA: Deleting line '", name, "' due to semafor repaint (arrow no longer at ", TimeToString(lineCreationTime), ").");
+              }
+           }
+         else if (!deleteLine && g_zzSemaforHandle == INVALID_HANDLE)
+           {
+             // If handle is invalid, we can't check for repaint, so only time-based deletion applies.
+             // Print("CleanUpOldLinesTA: ZZ Semafor handle invalid, skipping repaint check for line '", name, "'.");
+           }
+
+
+         if(deleteLine)
+           {
             ObjectDelete(0, name);
+            chartNeedsRedraw = true;
            }
         }
      }
-   // ChartRedraw(); // Optional: Redraw if lines were deleted. Often called by the main loop (OnTick) anyway.
+
+   if(chartNeedsRedraw)
+     {
+      // ChartRedraw(); // Redraw is handled by OnTick
+     }
   }
 
 //+------------------------------------------------------------------+
