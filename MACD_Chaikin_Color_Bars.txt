@@ -1,0 +1,324 @@
+//+--------------------------------------------------------------------+
+//|                                       MACD_Chaikin_Color_Bars.mq5 |
+//|                                                        Jules AI   |
+//|                                                                    |
+//| Combines MACD slope and Chaikin Oscillator to generate colored     |
+//| price bars/candles. Rich color when both indicators agree,         |
+//| and lighter when only MACD gives a signal.                         |
+//+--------------------------------------------------------------------+
+#property indicator_chart_window
+#property indicator_buffers 6 // Open, High, Low, Close, ColorIndex, SignalValue
+#property indicator_plots   1
+#property version           "1.0"
+#property description       "Colors bars/candles based on MACD slope and Chaikin Oscillator confirmation."
+#property copyright         "Jules AI"
+
+#include <MovingAverages.mqh> // For standard MA methods
+
+//---- Chart style enum
+enum enChartStyle
+{
+   STYLE_COLOR_BARS,    // DRAW_COLOR_BARS
+   STYLE_COLOR_CANDLES  // DRAW_COLOR_CANDLES
+};
+
+//---- Signal values (consistent with ComboTSI_Stoch)
+enum enSignalValues
+{
+   SIGNAL_STRONG_BULL = 0,    // Both MACD and Chaikin bullish
+   SIGNAL_STRONG_BEAR = 1,    // Both MACD and Chaikin bearish
+   SIGNAL_WEAK_BULL   = 2,    // Only MACD bullish
+   SIGNAL_WEAK_BEAR   = 3,    // Only MACD bearish
+   SIGNAL_NONE        = -1    // No clear signal
+};
+
+//---- Input parameters for MACD
+input group                "MACD Settings"
+input int                InpFastEMA      = 12;          // Fast EMA period
+input int                InpSlowEMA      = 26;          // Slow EMA period
+input int                InpSignalSMA    = 9;           // Signal SMA period
+input ENUM_APPLIED_PRICE InpAppliedPrice = PRICE_CLOSE; // Applied price for MACD
+
+//---- Input parameters for Chaikin Oscillator
+input group                "Chaikin Oscillator Settings"
+input int                InpChaikinFastMA = 3;            // Chaikin Fast MA period
+input int                InpChaikinSlowMA = 10;           // Chaikin Slow MA period
+input ENUM_MA_METHOD     InpChaikinSmoothMethod = MODE_EMA; // Chaikin MA method for A/D line
+input ENUM_APPLIED_VOLUME InpVolumeType    = VOLUME_TICK;   // Volumes for Chaikin
+
+//---- Chart style selection
+input group           "Chart Style"
+input enChartStyle    inpChartStyle   = STYLE_COLOR_BARS; // Price visualization style
+
+//---- Global buffers for price plotting
+double priceOpen[];
+double priceHigh[];
+double priceLow[];
+double priceClose[];
+double colorIndex[]; // 0=Strong Bull, 1=Strong Bear, 2=Weak Bull, 3=Weak Bear, -1=No signal
+double signalValueBuffer[]; // For EA consumption
+
+//---- Forward declarations for helper functions ----
+void GetPriceArray(ENUM_APPLIED_PRICE priceType, const double &open[], const double &high[], const double &low[], const double &close[], int total_rates, double &result[]);
+void MovingAverage(ENUM_MA_METHOD method, int rates_total, int prev_calculated, int begin, int period, const double &source[], double &dest[]);
+
+//+------------------------------------------------------------------+
+//| Custom indicator initialization function                         |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   //--- Set up indicator buffers
+   SetIndexBuffer(0, priceOpen, INDICATOR_DATA);
+   SetIndexBuffer(1, priceHigh, INDICATOR_DATA);
+   SetIndexBuffer(2, priceLow, INDICATOR_DATA);
+   SetIndexBuffer(3, priceClose, INDICATOR_DATA);
+   SetIndexBuffer(4, colorIndex, INDICATOR_COLOR_INDEX);
+   SetIndexBuffer(5, signalValueBuffer, INDICATOR_CALCULATIONS);
+   
+   //--- Set drawing style based on user selection
+   if(inpChartStyle == STYLE_COLOR_CANDLES)
+   {
+      PlotIndexSetInteger(0, PLOT_DRAW_TYPE, DRAW_COLOR_CANDLES);
+   }
+   else
+   {
+      PlotIndexSetInteger(0, PLOT_DRAW_TYPE, DRAW_COLOR_BARS);
+   }
+   
+   //--- Set colors for different signal types
+   PlotIndexSetInteger(0, PLOT_COLOR_INDEXES, 4);
+   PlotIndexSetInteger(0, PLOT_LINE_COLOR, 0, clrGreen);     // Strong Bullish
+   PlotIndexSetInteger(0, PLOT_LINE_COLOR, 1, clrCrimson);   // Strong Bearish
+   PlotIndexSetInteger(0, PLOT_LINE_COLOR, 2, clrLime);      // Weak Bullish
+   PlotIndexSetInteger(0, PLOT_LINE_COLOR, 3, clrOrange);    // Weak Bearish
+   
+   //--- Set empty value
+   PlotIndexSetDouble(0, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+   
+   //--- Set indicator name
+   string short_name = StringFormat("MACD+Chaikin Clr (%d,%d,%d | %d,%d)", 
+                                    InpFastEMA, InpSlowEMA, InpSignalSMA,
+                                    InpChaikinFastMA, InpChaikinSlowMA);
+   IndicatorSetString(INDICATOR_SHORTNAME, short_name);
+   PlotIndexSetString(0, PLOT_LABEL, "MACD/Chaikin Colored Bars");
+
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Custom indicator iteration function                              |
+//+------------------------------------------------------------------+
+int OnCalculate(const int rates_total,
+                const int prev_calculated,
+                const datetime &time[],
+                const double &open[],
+                const double &high[],
+                const double &low[],
+                const double &close[],
+                const long &tick_volume[],
+                const long &volume[],
+                const int &spread[])
+{
+   //--- Define minimum_rates_total
+   int min_rates_for_macd = InpSlowEMA + InpSignalSMA;
+   int min_rates_for_chaikin = InpChaikinSlowMA; // A/D needs at least 1, FastMA on A/D, SlowMA on A/D
+   int min_total = MathMax(min_rates_for_macd, min_rates_for_chaikin) + 1; // +1 for slope calculation lookback
+
+   if(rates_total < min_total)
+      return(0);
+
+   //--- Set start position for calculations
+   int start_idx; // Renamed from 'start' to avoid conflict if any global named 'start'
+   if(prev_calculated == 0) // First calculation or full recalculation
+   {
+      ArrayInitialize(priceOpen, EMPTY_VALUE);
+      ArrayInitialize(priceHigh, EMPTY_VALUE);
+      ArrayInitialize(priceLow, EMPTY_VALUE);
+      ArrayInitialize(priceClose, EMPTY_VALUE);
+      ArrayInitialize(colorIndex, SIGNAL_NONE); // Initialize with SIGNAL_NONE
+      ArrayInitialize(signalValueBuffer, SIGNAL_NONE); // Initialize with SIGNAL_NONE
+      start_idx = 0;
+   }
+   else 
+   {
+      start_idx = prev_calculated - 1;
+   }
+
+   //--- Copy price data to our buffers
+   for(int i = start_idx; i < rates_total; i++)
+   {
+      priceOpen[i] = open[i];
+      priceHigh[i] = high[i];
+      priceLow[i] = low[i];
+      priceClose[i] = close[i];
+      if (prev_calculated == 0 || i >= rates_total - (rates_total - prev_calculated +1) ) // Initialize/re-initialize new bars or fully recalculated bars
+      {
+         colorIndex[i] = SIGNAL_NONE; 
+         signalValueBuffer[i] = SIGNAL_NONE;
+      }
+   }
+
+   //--- MACD Calculation Buffers ---
+   static double macdLine[], signalLine[], fastMA[], slowMA[];
+   static double price_arr_for_macd[]; // Source price data for MACD MAs
+
+   if(ArraySize(price_arr_for_macd) != rates_total) ArrayResize(price_arr_for_macd, rates_total);
+   GetPriceArray(InpAppliedPrice, open, high, low, close, rates_total, price_arr_for_macd);
+
+   if(ArraySize(macdLine) < rates_total) ArrayResize(macdLine, rates_total);
+   if(ArraySize(signalLine) < rates_total) ArrayResize(signalLine, rates_total);
+   if(ArraySize(fastMA) < rates_total) ArrayResize(fastMA, rates_total);
+   if(ArraySize(slowMA) < rates_total) ArrayResize(slowMA, rates_total);
+   
+   if(prev_calculated == 0)
+   {
+      ArrayInitialize(macdLine, EMPTY_VALUE);
+      ArrayInitialize(signalLine, EMPTY_VALUE);
+      ArrayInitialize(fastMA, EMPTY_VALUE);
+      ArrayInitialize(slowMA, EMPTY_VALUE);
+   }
+   
+   //--- Chaikin Oscillator Calculation Buffers ---
+   static double adLine[], chaikinFastMA[], chaikinSlowMA[], chaikinOsc[];
+   if(ArraySize(adLine) < rates_total) ArrayResize(adLine, rates_total);
+   if(ArraySize(chaikinFastMA) < rates_total) ArrayResize(chaikinFastMA, rates_total);
+   if(ArraySize(chaikinSlowMA) < rates_total) ArrayResize(chaikinSlowMA, rates_total);
+   if(ArraySize(chaikinOsc) < rates_total) ArrayResize(chaikinOsc, rates_total);
+
+   if(prev_calculated == 0)
+   {
+      ArrayInitialize(adLine, 0.0); // A/D starts accumulation from 0
+      ArrayInitialize(chaikinFastMA, EMPTY_VALUE);
+      ArrayInitialize(chaikinSlowMA, EMPTY_VALUE);
+      ArrayInitialize(chaikinOsc, EMPTY_VALUE);
+   }
+
+   //--- Calculate MACD ---
+   ExponentialMAOnBuffer(rates_total, prev_calculated, 0, InpFastEMA, price_arr_for_macd, fastMA);
+   ExponentialMAOnBuffer(rates_total, prev_calculated, 0, InpSlowEMA, price_arr_for_macd, slowMA);
+
+   int macd_calc_start_idx = InpSlowEMA -1; 
+   for(int i = (prev_calculated == 0 ? macd_calc_start_idx : start_idx); i < rates_total; i++)
+   {
+      if(i < macd_calc_start_idx) { macdLine[i] = EMPTY_VALUE; continue;}
+      if(fastMA[i] != EMPTY_VALUE && slowMA[i] != EMPTY_VALUE)
+         macdLine[i] = fastMA[i] - slowMA[i];
+      else
+         macdLine[i] = EMPTY_VALUE;
+   }
+   
+   int macd_signal_calc_start_idx = macd_calc_start_idx + InpSignalSMA - 1;
+   SimpleMAOnBuffer(rates_total, prev_calculated, macd_calc_start_idx, InpSignalSMA, macdLine, signalLine);
+
+   //--- Calculate Chaikin Oscillator ---
+   // Calculate A/D Line
+   int ad_loop_start = (prev_calculated == 0 ? 0 : start_idx);
+   for(int i = ad_loop_start; i < rates_total; i++)
+   {
+      double h = high[i];
+      double l = low[i];
+      double c = close[i];
+      long v = (InpVolumeType == VOLUME_TICK) ? tick_volume[i] : volume[i];
+      double current_ad_val = 0;
+      if(h != l)
+         current_ad_val = ((c - l) - (h - c)) / (h - l) * v;
+      
+      if(i > 0) // Correctly accumulate from actual adLine[i-1]
+         adLine[i] = adLine[i-1] + current_ad_val;
+      else if (i==0) // For the very first bar of history (prev_calculated = 0, i = 0)
+         adLine[i] = current_ad_val;
+      // If prev_calculated > 0 and i == start_idx == ad_loop_start, adLine[i-1] is from previous tick.
+   }
+
+   MovingAverage(InpChaikinSmoothMethod, rates_total, prev_calculated, 0, InpChaikinFastMA, adLine, chaikinFastMA);
+   MovingAverage(InpChaikinSmoothMethod, rates_total, prev_calculated, 0, InpChaikinSlowMA, adLine, chaikinSlowMA);
+   
+   int chaikin_calc_start_idx = InpChaikinSlowMA -1; 
+   for(int i = (prev_calculated == 0 ? chaikin_calc_start_idx : start_idx); i < rates_total; i++)
+   {
+      if(i < chaikin_calc_start_idx) { chaikinOsc[i] = EMPTY_VALUE; continue; }
+      if(chaikinFastMA[i] != EMPTY_VALUE && chaikinSlowMA[i] != EMPTY_VALUE)
+        chaikinOsc[i] = chaikinFastMA[i] - chaikinSlowMA[i];
+      else
+        chaikinOsc[i] = EMPTY_VALUE;
+   }
+   
+   //--- Generate color signals ---
+   // Determine the first bar index where MACD line, signal, and Chaikin oscillator are all valid AND have a previous bar for slope.
+   int final_signal_start_idx = 1; // Must be at least 1 for [i-1] access.
+   final_signal_start_idx = MathMax(final_signal_start_idx, macd_signal_calc_start_idx +1); // +1 because macd_signal_calc_start_idx is the first valid, need i-1 of that for slope.
+   final_signal_start_idx = MathMax(final_signal_start_idx, chaikin_calc_start_idx +1);   // +1 for similar reason for Chaikin.
+   final_signal_start_idx = MathMax(final_signal_start_idx, start_idx); // Ensure we only calculate new or requested bars.
+
+
+   for(int i = final_signal_start_idx; i < rates_total; i++)
+   {
+      // All checks for i being too small should be covered by final_signal_start_idx
+      int macd_dir = 0; // 0=neutral, 1=bull, 2=bear
+      if(macdLine[i] != EMPTY_VALUE && macdLine[i-1] != EMPTY_VALUE)
+      {
+         if(macdLine[i] > macdLine[i-1]) macd_dir = 1;
+         else if(macdLine[i] < macdLine[i-1]) macd_dir = 2;
+      }
+
+      int chaikin_dir = 0; // 0=neutral, 1=bull, 2=bear
+      if(chaikinOsc[i] != EMPTY_VALUE && chaikinOsc[i-1] != EMPTY_VALUE)
+      {
+         if(chaikinOsc[i] > chaikinOsc[i-1]) chaikin_dir = 1;
+         else if(chaikinOsc[i] < chaikinOsc[i-1]) chaikin_dir = 2;
+      }
+      
+      colorIndex[i] = SIGNAL_NONE; // Default for current bar
+      if(macd_dir != 0) 
+      {
+         // Strong signal if both agree AND Chaikin is not neutral
+         if(macd_dir == chaikin_dir && chaikin_dir != 0) 
+            colorIndex[i] = (macd_dir == 1) ? SIGNAL_STRONG_BULL : SIGNAL_STRONG_BEAR;
+         else // Weak signal if only MACD has a direction, or Chaikin is neutral/disagrees
+            colorIndex[i] = (macd_dir == 1) ? SIGNAL_WEAK_BULL : SIGNAL_WEAK_BEAR;
+      }
+      signalValueBuffer[i] = colorIndex[i];
+   }
+   return(rates_total);
+}
+
+//+------------------------------------------------------------------+
+//| Helper function to get price array based on selected price type  |
+//+------------------------------------------------------------------+
+void GetPriceArray(ENUM_APPLIED_PRICE priceType, const double &open[], const double &high[], const double &low[], const double &close[], int total_rates, double &result[])
+{
+   //Ensure result array is adequately sized;
+   if(ArraySize(result) != total_rates)
+      ArrayResize(result, total_rates);
+
+   for(int i=0; i<total_rates; i++)
+   {
+      switch(priceType)
+      {
+         case PRICE_OPEN:    result[i] = open[i]; break;
+         case PRICE_HIGH:    result[i] = high[i]; break;
+         case PRICE_LOW:     result[i] = low[i]; break;
+         case PRICE_MEDIAN:  result[i] = (high[i] + low[i]) / 2.0; break;
+         case PRICE_TYPICAL: result[i] = (high[i] + low[i] + close[i]) / 3.0; break;
+         case PRICE_WEIGHTED:result[i] = (high[i] + low[i] + close[i] + close[i]) / 4.0; break;
+         default:            result[i] = close[i]; break;
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Helper function to calculate MA on a buffer                      |
+//+------------------------------------------------------------------+
+void MovingAverage(ENUM_MA_METHOD method, int rates_total, int prev_calculated, int begin, int period, const double &source[], double &dest[])
+{
+   // It's assumed dest is already sized correctly.
+   // MA functions from MovingAverages.mqh handle prev_calculated internally for optimization.
+   switch(method)
+   {
+      case MODE_EMA:  ExponentialMAOnBuffer(rates_total, prev_calculated, begin, period, source, dest); break;
+      case MODE_SMMA: SmoothedMAOnBuffer(rates_total, prev_calculated, begin, period, source, dest);    break;
+      case MODE_LWMA: LinearWeightedMAOnBuffer(rates_total, prev_calculated, begin, period, source, dest); break;
+      default:        SimpleMAOnBuffer(rates_total, prev_calculated, begin, period, source, dest);       break;
+   }
+}
+//+------------------------------------------------------------------+
