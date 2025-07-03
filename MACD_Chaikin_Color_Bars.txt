@@ -1,7 +1,7 @@
 //+--------------------------------------------------------------------+
-//|                                       MACD_Chaikin_Color_Bars.mq5 |
-//|                                                        Jules AI   |
-//|                                                                    |
+//|                                        MACD_Chaikin_Color_Bars.mq5 |
+//|                                                        @mobilebass |
+//|                                               https://www.mql5.com|
 //| Combines MACD slope and Chaikin Oscillator to generate colored     |
 //| price bars/candles. Rich color when both indicators agree,         |
 //| and lighter when only MACD gives a signal.                         |
