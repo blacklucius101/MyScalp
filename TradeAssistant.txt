@@ -415,7 +415,7 @@ void CleanUpOldLinesTA()
    // Calculate expiration time: lines older than 'currentTime - (PeriodSeconds() * (g_lineDurationBars + buffer))' are considered expired.
    // A small buffer (e.g., 2 bars) is added to ensure lines are visible for their intended duration
    // and to account for timing differences in execution.
-   datetime expirationTimeThreshold = currentTime - (PeriodSeconds() * (g_lineDurationBars + 3)); // +2 bar buffer
+   datetime expirationTimeThreshold = currentTime - (PeriodSeconds() * (g_lineDurationBars + 3)); // +3 bar buffer
 
    int totalObjects = ObjectsTotal(0, 0, OBJ_TREND); // Only iterate over OBJ_TREND objects for efficiency
    bool chartNeedsRedraw = false; // Flag to indicate if a redraw might be needed (handled by OnTick)
