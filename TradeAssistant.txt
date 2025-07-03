@@ -78,26 +78,6 @@ EnumExecutionType g_currentExecutionType;
 SignalData g_arrowBearish;    // Stores bearish signal data
 SignalData g_arrowBullish;    // Stores bullish signal data
 int g_zzSemaforHandle = INVALID_HANDLE; // Handle for Single_Level_ZZ_Semafor indicator
-int g_macdChaikinHandle = INVALID_HANDLE; // Handle for MACD_Chaikin_Color_Bars indicator
-
-//--- MACD_Chaikin_Color_Bars Signal Values
-enum ENUM_MACD_CHAIKIN_SIGNAL
-{
-   SIGNAL_STRONG_BULL = 0,
-   SIGNAL_STRONG_BEAR = 1,
-   SIGNAL_WEAK_BULL   = 2,
-   SIGNAL_WEAK_BEAR   = 3,
-   SIGNAL_NONE        = -1
-};
-
-//--- Global variable for pending trade status in execute_immediately mode
-enum ENUM_PENDING_STATUS
-{
-   PENDING_STATUS_NONE,
-   PENDING_STATUS_ACTIVE
-};
-ENUM_PENDING_STATUS g_immediatePendingStatus = PENDING_STATUS_NONE;
-datetime g_immediatePendingCandleTime = 0;
 //+------------------------------------------------------------------+
 //| Execute Trade Operation                                          |
 //+------------------------------------------------------------------+
@@ -131,134 +111,41 @@ void ExecuteTrade(ENUM_ORDER_TYPE orderType)
    double prevHigh = iHigh(_Symbol, _Period, 1);
    double prevLow = iLow(_Symbol, _Period, 1);
    double prevRange = prevHigh - prevLow;
-
+   
+   // Check retracement condition
    double currentPrice = 0;
-   bool conditionsMet = false; // Combined flag for all conditions
-
-   // --- MACD Chaikin Logic for EXECUTE_IMMEDIATE ---
-   if (g_currentExecutionType == EXECUTE_IMMEDIATE && g_macdChaikinHandle != INVALID_HANDLE)
+   bool retracementConditionMet = false;
+   
+   if(orderType == ORDER_TYPE_BUY)
    {
-      double macdChaikinBuffer[];
-      if (CopyBuffer(g_macdChaikinHandle, 5, 0, 2, macdChaikinBuffer) == 2) // Get current (idx 0) and previous (idx 1)
+      currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      if(currentPrice == 0) return;
+      
+      // BUY CONDITION: Price must rise ABOVE retracement level
+      double requiredRetracementPrice = prevLow + (InpSignalThreshold / 100.0) * prevRange;
+      retracementConditionMet = (currentPrice >= requiredRetracementPrice); // Changed to >=
+      
+      if(!retracementConditionMet)
       {
-         ENUM_MACD_CHAIKIN_SIGNAL prevSignal = (ENUM_MACD_CHAIKIN_SIGNAL)macdChaikinBuffer[1];
-         ENUM_MACD_CHAIKIN_SIGNAL currentSignal = (ENUM_MACD_CHAIKIN_SIGNAL)macdChaikinBuffer[0];
-
-         if (orderType == ORDER_TYPE_SELL)
-         {
-            // Condition 1: Previous SIGNAL_STRONG_BULL, Current SIGNAL_STRONG_BEAR or SIGNAL_WEAK_BULL
-            if (prevSignal == SIGNAL_STRONG_BULL && (currentSignal == SIGNAL_STRONG_BEAR || currentSignal == SIGNAL_WEAK_BULL))
-            {
-               conditionsMet = true;
-            }
-            // Condition 2: Previous SIGNAL_WEAK_BULL, Current SIGNAL_STRONG_BEAR
-            else if (prevSignal == SIGNAL_WEAK_BULL && currentSignal == SIGNAL_STRONG_BEAR)
-            {
-               conditionsMet = true;
-            }
-         }
-         else if (orderType == ORDER_TYPE_BUY)
-         {
-            // Condition 1: Previous SIGNAL_STRONG_BEAR, Current SIGNAL_STRONG_BULL or SIGNAL_WEAK_BEAR
-            if (prevSignal == SIGNAL_STRONG_BEAR && (currentSignal == SIGNAL_STRONG_BULL || currentSignal == SIGNAL_WEAK_BEAR))
-            {
-               conditionsMet = true;
-            }
-            // Condition 2: Previous SIGNAL_WEAK_BEAR, Current SIGNAL_STRONG_BULL
-            else if (prevSignal == SIGNAL_WEAK_BEAR && currentSignal == SIGNAL_STRONG_BULL)
-            {
-               conditionsMet = true;
-            }
-         }
-         
-         if (!conditionsMet)
-         {
-            Print("ExecuteTrade (Immediate): MACD Chaikin conditions not met. Prev: ", EnumToString(prevSignal), ", Curr: ", EnumToString(currentSignal));
-            // Set pending status if not executed
-            g_immediatePendingStatus = PENDING_STATUS_ACTIVE;
-            g_immediatePendingCandleTime = iTime(_Symbol, _Period, 0);
-            ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrYellow); // Yellow for pending immediate
-            ChartRedraw();
-            return;
-         }
-         else
-         {
-             Print("ExecuteTrade (Immediate): MACD Chaikin conditions MET. Prev: ", EnumToString(prevSignal), ", Curr: ", EnumToString(currentSignal));
-             g_immediatePendingStatus = PENDING_STATUS_NONE; // Reset pending status as conditions are met
-         }
-      }
-      else
-      {
-         Print("ExecuteTrade (Immediate): Failed to copy MACD_Chaikin_Color_Bars buffer. Error: ", GetLastError());
-         // Set pending status if indicator data is not available
-         g_immediatePendingStatus = PENDING_STATUS_ACTIVE;
-         g_immediatePendingCandleTime = iTime(_Symbol, _Period, 0);
-         ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrYellow); // Yellow for pending immediate
-         ChartRedraw();
+         Print("Buy condition not met: Need price >=", requiredRetracementPrice);
          return;
       }
    }
-   else if (g_currentExecutionType == EXECUTE_IMMEDIATE && g_macdChaikinHandle == INVALID_HANDLE)
+   else if(orderType == ORDER_TYPE_SELL)
    {
-      Print("ExecuteTrade (Immediate): MACD_Chaikin_Color_Bars indicator handle is invalid. Trade cannot be executed based on its conditions.");
-      // Set pending status if indicator is not available
-      g_immediatePendingStatus = PENDING_STATUS_ACTIVE;
-      g_immediatePendingCandleTime = iTime(_Symbol, _Period, 0);
-      ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrYellow); // Yellow for pending immediate
-      ChartRedraw();
-      return;
-   }
-   // --- End of MACD Chaikin Logic ---
-   
-   // Check retracement condition (Only if not EXECUTE_IMMEDIATE or if EXECUTE_IMMEDIATE and MACD conditions were met)
-   // For EXECUTE_IMMEDIATE, conditionsMet will be true if MACD Chaikin conditions passed.
-   // For EXECUTE_ON_NEXT_CANDLE, conditionsMet starts as false and this block will set it.
-   if (g_currentExecutionType == EXECUTE_ON_NEXT_CANDLE || (g_currentExecutionType == EXECUTE_IMMEDIATE && conditionsMet))
-   {
-      bool retracementConditionMet = false;
-      if (orderType == ORDER_TYPE_BUY)
+      currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      if(currentPrice == 0) return;
+      
+      // SELL condition: Price must drop BELOW retracement level
+      double requiredRetracementPrice = prevHigh - (InpSignalThreshold / 100.0) * prevRange;
+      retracementConditionMet = (currentPrice <= requiredRetracementPrice);
+      
+      if(!retracementConditionMet)
       {
-         currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-         if (currentPrice == 0) return;
-         double requiredRetracementPrice = prevLow + (InpSignalThreshold / 100.0) * prevRange;
-         retracementConditionMet = (currentPrice >= requiredRetracementPrice);
-         if (!retracementConditionMet)
-         {
-            Print("Buy condition not met (retracement): Need price >=", requiredRetracementPrice);
-         }
+         Print("Sell condition not met: Need price <=", requiredRetracementPrice);
+         return;
       }
-      else if (orderType == ORDER_TYPE_SELL)
-      {
-         currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-         if (currentPrice == 0) return;
-         double requiredRetracementPrice = prevHigh - (InpSignalThreshold / 100.0) * prevRange;
-         retracementConditionMet = (currentPrice <= requiredRetracementPrice);
-         if (!retracementConditionMet)
-         {
-            Print("Sell condition not met (retracement): Need price <=", requiredRetracementPrice);
-         }
-      }
-      conditionsMet = retracementConditionMet; // Update overall conditionsMet
    }
-
-
-   if (!conditionsMet) // If any condition (MACD Chaikin for immediate, or retracement for either) failed
-   {
-      // For EXECUTE_IMMEDIATE, pending status would have been set by MACD Chaikin logic if it failed there.
-      // If MACD Chaikin passed but retracement failed for EXECUTE_IMMEDIATE:
-      if (g_currentExecutionType == EXECUTE_IMMEDIATE) {
-          Print("ExecuteTrade (Immediate): Retracement condition failed after MACD Chaikin passed.");
-          g_immediatePendingStatus = PENDING_STATUS_ACTIVE;
-          g_immediatePendingCandleTime = iTime(_Symbol, _Period, 0);
-          ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrYellow); // Yellow for pending immediate
-          ChartRedraw();
-      }
-      // For EXECUTE_ON_NEXT_CANDLE, no trade is placed, pending status is handled by button click logic.
-      return;
-   }
-   
-   // If all conditions are met (retracement for next_candle, or MACD Chaikin + retracement for immediate)
-   g_immediatePendingStatus = PENDING_STATUS_NONE; // Ensure pending is cleared if we proceed to trade
 
    double slPrice = 0.0;
    double tpPrice = 0.0;
@@ -528,7 +415,7 @@ void CleanUpOldLinesTA()
    // Calculate expiration time: lines older than 'currentTime - (PeriodSeconds() * (g_lineDurationBars + buffer))' are considered expired.
    // A small buffer (e.g., 2 bars) is added to ensure lines are visible for their intended duration
    // and to account for timing differences in execution.
-   datetime expirationTimeThreshold = currentTime - (PeriodSeconds() * (g_lineDurationBars + 3)); // +3 bar buffer
+   datetime expirationTimeThreshold = currentTime - (PeriodSeconds() * (g_lineDurationBars + 3)); // +2 bar buffer
 
    int totalObjects = ObjectsTotal(0, 0, OBJ_TREND); // Only iterate over OBJ_TREND objects for efficiency
    bool chartNeedsRedraw = false; // Flag to indicate if a redraw might be needed (handled by OnTick)
@@ -842,20 +729,6 @@ int OnInit()
      {
       Print("Single_Level_ZZ_Semafor indicator loaded successfully. Handle: ", g_zzSemaforHandle);
      }
-
-//--- Load MACD Chaikin Color Bars Indicator
-   g_macdChaikinHandle = iCustom(NULL, 0, "Custom\\MACD_Chaikin_Color_Bars");
-   if(g_macdChaikinHandle == INVALID_HANDLE)
-     {
-      Print("Error: Failed to load MACD_Chaikin_Color_Bars indicator. EA functionality will be limited. Error: ", GetLastError());
-      // EA can continue but immediate execution based on this indicator won't work.
-      // Alert("Failed to load MACD_Chaikin_Color_Bars. Immediate trades based on its signals will not be available.");
-     }
-   else
-     {
-      Print("MACD_Chaikin_Color_Bars indicator loaded successfully. Handle: ", g_macdChaikinHandle);
-     }
-
 //--- Initialize signal data structures
    ResetSignalDataTA(g_arrowBearish);
    ResetSignalDataTA(g_arrowBullish);
@@ -872,12 +745,6 @@ void OnDeinit(const int reason)
       IndicatorRelease(g_zzSemaforHandle);
       Print("Single_Level_ZZ_Semafor indicator released. Handle: ", g_zzSemaforHandle);
       g_zzSemaforHandle = INVALID_HANDLE; // Reset handle after release
-     }
-   if(g_macdChaikinHandle != INVALID_HANDLE)
-     {
-      IndicatorRelease(g_macdChaikinHandle);
-      Print("MACD_Chaikin_Color_Bars indicator released. Handle: ", g_macdChaikinHandle);
-      g_macdChaikinHandle = INVALID_HANDLE; // Reset handle after release
      }
 
    //--- Clean up created objects
@@ -1030,25 +897,11 @@ void OnTick()
       // Process new bar for historical line drawing
       ProcessNewBarTA(); 
 
-      // Reset immediate pending status if a new candle has formed
-      if (g_immediatePendingStatus == PENDING_STATUS_ACTIVE && newBarDTime > g_immediatePendingCandleTime)
-      {
-         Print("OnTick: New bar formed, resetting immediate pending status.");
-         g_immediatePendingStatus = PENDING_STATUS_NONE;
-         g_immediatePendingCandleTime = 0;
-         // If not also pending for next candle, reset indicator color
-         if (!g_tradeOnNextCandlePending)
-         {
-            ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
-            // ChartRedraw(); // Avoid redundant redraw if other redraws are happening
-         }
-      }
-
       // Process pending "next candle" trade
       if(g_tradeOnNextCandlePending && g_pendingOrderType != WRONG_VALUE)
         {
          Print("Executing pending order: ", EnumToString(g_pendingOrderType));
-         ExecuteTrade(g_pendingOrderType); // This will reset g_tradeOnNextCandlePending and indicator color
+         ExecuteTrade(g_pendingOrderType);
         }
      }
    
@@ -1161,24 +1014,13 @@ void OnChartEvent(const int id,
       if(sparam == g_buyButtonName)
         {
          // Print message now uses g_currentExecutionType, which is good.
-         Print("Buy button clicked. Execution Type: ", EnumToString(g_currentExecutionType));
-         if(g_currentExecutionType == EXECUTE_IMMEDIATE)
+         Print("Buy button clicked. Execution Type: ", EnumToString(g_currentExecutionType)); 
+         if(g_currentExecutionType == EXECUTE_IMMEDIATE) // Condition already uses g_currentExecutionType
            {
-            // Reset any "next candle" pending status if switching to immediate action
-            if (g_tradeOnNextCandlePending) {
-                g_tradeOnNextCandlePending = false;
-                g_pendingOrderType = WRONG_VALUE;
-            }
-            // ExecuteTrade will handle g_immediatePendingStatus and indicator color
             ExecuteTrade(ORDER_TYPE_BUY);
            }
          else // EXECUTE_ON_NEXT_CANDLE
            {
-            // Clear any immediate pending status if switching to "next candle"
-            if (g_immediatePendingStatus == PENDING_STATUS_ACTIVE) {
-                g_immediatePendingStatus = PENDING_STATUS_NONE;
-                g_immediatePendingCandleTime = 0;
-            }
             if(g_tradeOnNextCandlePending && g_pendingOrderType == ORDER_TYPE_SELL)
               {
                Print("A Sell order is already pending for the next candle. Cannot set a Buy order simultaneously.");
@@ -1196,23 +1038,12 @@ void OnChartEvent(const int id,
         {
          // Print message now uses g_currentExecutionType, which is good.
          Print("Sell button clicked. Execution Type: ", EnumToString(g_currentExecutionType));
-         if(g_currentExecutionType == EXECUTE_IMMEDIATE)
+         if(g_currentExecutionType == EXECUTE_IMMEDIATE) // Condition already uses g_currentExecutionType
            {
-            // Reset any "next candle" pending status if switching to immediate action
-            if (g_tradeOnNextCandlePending) {
-                g_tradeOnNextCandlePending = false;
-                g_pendingOrderType = WRONG_VALUE;
-            }
-            // ExecuteTrade will handle g_immediatePendingStatus and indicator color
-            ExecuteTrade(ORDER_TYPE_SELL);
+            ExecuteTrade(ORDER_TYPE_SELL); // ExecuteTrade will reset indicator to gray
            }
          else // EXECUTE_ON_NEXT_CANDLE
            {
-            // Clear any immediate pending status if switching to "next candle"
-            if (g_immediatePendingStatus == PENDING_STATUS_ACTIVE) {
-                g_immediatePendingStatus = PENDING_STATUS_NONE;
-                g_immediatePendingCandleTime = 0;
-            }
             if(g_tradeOnNextCandlePending && g_pendingOrderType == ORDER_TYPE_BUY)
               {
                Print("A Buy order is already pending for the next candle. Cannot set a Sell order simultaneously. Current pending Buy indicator remains (Green).");
@@ -1237,18 +1068,12 @@ void OnChartEvent(const int id,
             g_currentExecutionType = EXECUTE_ON_NEXT_CANDLE;
             ObjectSetString(0, g_execTypeButtonName, OBJPROP_TEXT, "Exec: Next");
             Print("Execution type changed to: Next Candle");
-
-            // If switching to NextCandle:
-            // 1. Clear any immediate pending status.
-            if (g_immediatePendingStatus == PENDING_STATUS_ACTIVE) {
-                g_immediatePendingStatus = PENDING_STATUS_NONE;
-                g_immediatePendingCandleTime = 0;
-            }
-            // 2. If nothing is pending for "next candle" either, set indicator to gray.
-            //    If a "next candle" trade IS pending, its color (Red/Green) should remain.
-            if (!g_tradeOnNextCandlePending) {
+            // If switching to NextCandle and nothing is currently pending, ensure indicator is neutral gray.
+            // If a trade becomes pending later (by clicking Buy/Sell), it will turn Red/Green.
+            if (!g_tradeOnNextCandlePending)
+              {
                ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
-            }
+              }
            }
          else // Current was EXECUTE_ON_NEXT_CANDLE, now switching to EXECUTE_IMMEDIATE
            {
@@ -1256,21 +1081,14 @@ void OnChartEvent(const int id,
             ObjectSetString(0, g_execTypeButtonName, OBJPROP_TEXT, "Exec: Imm");
             Print("Execution type changed to: Immediate");
 
-            // If switching to Immediate:
-            // 1. Cancel any "next candle" pending trade.
-            if (g_tradeOnNextCandlePending) {
-               g_tradeOnNextCandlePending = false;
+            // If a trade was pending from the previous NextCandle mode, cancel it and reset indicator.
+            if (g_tradeOnNextCandlePending) 
+              {
+               ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
+               g_tradeOnNextCandlePending = false; // Cancel the pending trade
                g_pendingOrderType = WRONG_VALUE;
                Print("Pending next candle trade automatically cancelled: mode switched to Immediate.");
-            }
-            // 2. Clear any immediate pending status (though unlikely to be active if switching TO immediate, good for safety).
-            if (g_immediatePendingStatus == PENDING_STATUS_ACTIVE) {
-                g_immediatePendingStatus = PENDING_STATUS_NONE;
-                g_immediatePendingCandleTime = 0;
-            }
-            // 3. Set indicator to gray, as no immediate action has been taken yet by this button click.
-            //    If user then clicks Buy/Sell, ExecuteTrade will handle yellow if conditions not met.
-            ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
+              }
            }
          // ChartRedraw() is called at the start of CHARTEVENT_OBJECT_CLICK, which covers button text and indicator color changes.
          // No need for an explicit ChartRedraw() here unless there's a specific reason for immediate visual feedback before other logic.
