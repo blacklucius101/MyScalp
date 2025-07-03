@@ -75,6 +75,15 @@ bool g_tradeOnNextCandlePending = false;     // Flag for pending next candle tra
 //--- Global variable to hold the current execution type state
 EnumExecutionType g_currentExecutionType;
 
+//--- Global variables for immediate pending trades
+bool g_immediateTradePending = false;      // Flag for pending immediate trade
+ENUM_ORDER_TYPE g_immediatePendingOrderType = WRONG_VALUE; // Stores pending immediate order type
+datetime g_pendingTradeCandleTime = 0;     // Stores the candle time when immediate trade became pending
+
+//--- Colors for pending indicator states
+const color clrPendingImmediateBuy = clrAqua;
+const color clrPendingImmediateSell = clrMagenta; // Or use a single clrYellow for any immediate pending
+
 SignalData g_arrowBearish;    // Stores bearish signal data
 SignalData g_arrowBullish;    // Stores bullish signal data
 int g_zzSemaforHandle = INVALID_HANDLE; // Handle for Single_Level_ZZ_Semafor indicator
@@ -89,8 +98,12 @@ void ExecuteTrade(ENUM_ORDER_TYPE orderType)
    if(orderType != ORDER_TYPE_BUY && orderType != ORDER_TYPE_SELL)
      {
       Print("ExecuteTrade: Invalid order type specified.");
+      // Reset all pending states if called with invalid type
       g_tradeOnNextCandlePending = false; 
       g_pendingOrderType = WRONG_VALUE;
+      g_immediateTradePending = false;
+      g_immediatePendingOrderType = WRONG_VALUE;
+      g_pendingTradeCandleTime = 0;
       ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
       ChartRedraw();
       return;
@@ -100,57 +113,63 @@ void ExecuteTrade(ENUM_ORDER_TYPE orderType)
    if(lot <= 0)
      {
       Print("ExecuteTrade: Invalid lot size calculated: ", lot);
-      g_tradeOnNextCandlePending = false; 
-      g_pendingOrderType = WRONG_VALUE;
+      // Reset relevant pending state if lot size is invalid
+      if(g_immediateTradePending && g_immediatePendingOrderType == orderType)
+        {
+         g_immediateTradePending = false;
+         g_immediatePendingOrderType = WRONG_VALUE;
+         g_pendingTradeCandleTime = 0;
+        }
+      if(g_tradeOnNextCandlePending && g_pendingOrderType == orderType)
+        {
+         g_tradeOnNextCandlePending = false; 
+         g_pendingOrderType = WRONG_VALUE;
+        }
       ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
       ChartRedraw();
       return;
      }
 
-   // Get previous candle data
-   double prevHigh = iHigh(_Symbol, _Period, 1);
-   double prevLow = iLow(_Symbol, _Period, 1);
-   double prevRange = prevHigh - prevLow;
+   // Condition check is now separated
+   if(!CheckTradeConditions(orderType))
+     {
+      // CheckTradeConditions will print why.
+      // If called from OnTick for an immediate pending trade, this failure means it remains pending.
+      // If called from AttemptImmediateTradeExecution, that function handles setting it to pending.
+      // If called for a "next candle" trade, this failure means the "next candle" trade doesn't proceed.
+      //   In this specific "next candle" failure case, we should reset the "next candle" pending flags
+      //   because the conditions were not met AT THE TIME OF EXECUTION.
+      if(g_tradeOnNextCandlePending && g_pendingOrderType == orderType && !g_immediateTradePending) // Ensure it's a next-candle context
+        {
+         Print("ExecuteTrade: Conditions not met for pending next candle ", (orderType == ORDER_TYPE_BUY ? "BUY" : "SELL"), ". Resetting next candle pending state.");
+         g_tradeOnNextCandlePending = false;
+         g_pendingOrderType = WRONG_VALUE;
+         ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
+         ChartRedraw();
+        }
+      return; // Conditions not met, so don't proceed to trade.
+     }
    
-   // Check retracement condition
-   double currentPrice = 0;
-   bool retracementConditionMet = false;
-   
-   if(orderType == ORDER_TYPE_BUY)
-   {
-      currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-      if(currentPrice == 0) return;
-      
-      // BUY CONDITION: Price must rise ABOVE retracement level
-      double requiredRetracementPrice = prevLow + (InpSignalThreshold / 100.0) * prevRange;
-      retracementConditionMet = (currentPrice >= requiredRetracementPrice); // Changed to >=
-      
-      if(!retracementConditionMet)
-      {
-         Print("Buy condition not met: Need price >=", requiredRetracementPrice);
-         return;
-      }
-   }
-   else if(orderType == ORDER_TYPE_SELL)
-   {
-      currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      if(currentPrice == 0) return;
-      
-      // SELL condition: Price must drop BELOW retracement level
-      double requiredRetracementPrice = prevHigh - (InpSignalThreshold / 100.0) * prevRange;
-      retracementConditionMet = (currentPrice <= requiredRetracementPrice);
-      
-      if(!retracementConditionMet)
-      {
-         Print("Sell condition not met: Need price <=", requiredRetracementPrice);
-         return;
-      }
-   }
+   // Conditions are met, get current price for trade execution
+   double currentPrice = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   if(currentPrice == 0)
+     {
+       Print("ExecuteTrade: Could not retrieve current price for trade execution. Aborting trade attempt.");
+        // Since we can't get a price, the pending action (if any) cannot proceed and should be reset.
+        g_immediateTradePending = false;
+        g_immediatePendingOrderType = WRONG_VALUE;
+        g_pendingTradeCandleTime = 0;
+        g_tradeOnNextCandlePending = false;
+        g_pendingOrderType = WRONG_VALUE;
+        ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
+        ChartRedraw();
+       return;
+     }
 
    double slPrice = 0.0;
    double tpPrice = 0.0;
    string comment = "";
-   bool tradeExecutedOrAttempted = false; // Flag to track if we proceed to reset flags and indicator
+   bool tradeAttemptMade = false; // Flag to indicate a trade operation (buy/sell) was actually invoked
 
    if(orderType == ORDER_TYPE_BUY)
      {
@@ -158,21 +177,17 @@ void ExecuteTrade(ENUM_ORDER_TYPE orderType)
       tpPrice = (InpTakeProfit > 0) ? currentPrice + InpTakeProfit * _Point : 0.0;
       comment = "Buy executed by EA";
       Print("Attempting BUY: Lot=", lot, ", Price=", DoubleToString(currentPrice, _Digits), ", SL=", DoubleToString(slPrice, _Digits), ", TP=", DoubleToString(tpPrice, _Digits));
+      tradeAttemptMade = true;
       if(!trade.Buy(lot, _Symbol, currentPrice, slPrice, tpPrice, comment))
         {
          Print("Buy order failed: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
+         // Even on failure, this attempt resolves any pending state.
         }
       else
         {
          Print("Buy order successful. Position #", trade.ResultOrder());
-         // --- BEGIN MODIFICATION: Close opposite trades ---
-         if(trade.ResultOrder() > 0) // Check if buy order was successfully placed
-           {
-            CloseOppositeTrades(ORDER_TYPE_SELL); // Close any existing sell trades
-           }
-         // --- END MODIFICATION ---
+         if(trade.ResultOrder() > 0) CloseOppositeTrades(ORDER_TYPE_SELL);
         }
-      tradeExecutedOrAttempted = true;
      }
    else if(orderType == ORDER_TYPE_SELL)
      {
@@ -180,32 +195,100 @@ void ExecuteTrade(ENUM_ORDER_TYPE orderType)
       tpPrice = (InpTakeProfit > 0) ? currentPrice - InpTakeProfit * _Point : 0.0;
       comment = "Sell executed by EA";
       Print("Attempting SELL: Lot=", lot, ", Price=", DoubleToString(currentPrice, _Digits), ", SL=", DoubleToString(slPrice, _Digits), ", TP=", DoubleToString(tpPrice, _Digits));
+      tradeAttemptMade = true;
       if(!trade.Sell(lot, _Symbol, currentPrice, slPrice, tpPrice, comment))
         {
          Print("Sell order failed: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
+         // Even on failure, this attempt resolves any pending state.
         }
       else
         {
          Print("Sell order successful. Position #", trade.ResultOrder());
-         // --- BEGIN MODIFICATION: Close opposite trades ---
-         if(trade.ResultOrder() > 0) // Check if sell order was successfully placed
-           {
-            CloseOppositeTrades(ORDER_TYPE_BUY); // Close any existing buy trades
-           }
-         // --- END MODIFICATION ---
+         if(trade.ResultOrder() > 0) CloseOppositeTrades(ORDER_TYPE_BUY);
         }
-      tradeExecutedOrAttempted = true;
      }
 
-   if(tradeExecutedOrAttempted)
+   // If a trade operation was attempted (Buy or Sell), regardless of success or failure at broker level,
+   // it means the condition for trading was met and the EA tried to act.
+   // This resolves any pending state (either immediate or next-candle).
+   if(tradeAttemptMade)
      {
-      // Reset pending flags as the trade was attempted (either successfully or not)
+      Print("ExecuteTrade: Trade attempt made for ", (orderType == ORDER_TYPE_BUY ? "BUY" : "SELL"), ". Resetting all pending states.");
+      g_immediateTradePending = false;
+      g_immediatePendingOrderType = WRONG_VALUE;
+      g_pendingTradeCandleTime = 0;
+      
       g_tradeOnNextCandlePending = false;
       g_pendingOrderType = WRONG_VALUE;
-      // Reset the indicator color as the pending action is resolved
+      
       ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
       ChartRedraw(); 
      }
+   // If tradeAttemptMade is false, it means orderType was invalid or some other pre-check failed,
+   // those cases already handle resetting flags or returning.
+  }
+
+//+------------------------------------------------------------------+
+//| Check Trade Conditions                                           |
+//+------------------------------------------------------------------+
+bool CheckTradeConditions(ENUM_ORDER_TYPE orderType)
+  {
+   if(orderType != ORDER_TYPE_BUY && orderType != ORDER_TYPE_SELL)
+     {
+      Print("CheckTradeConditions: Invalid order type specified.");
+      return false;
+     }
+
+   // Get previous candle data
+   double prevHigh = iHigh(_Symbol, _Period, 1);
+   double prevLow = iLow(_Symbol, _Period, 1);
+   double prevRange = prevHigh - prevLow;
+
+   if(prevRange <= 0) // Check if point is valid before using it in messages.
+     {
+      if (_Point > 0) Print("CheckTradeConditions: Previous candle range is zero or negative (H:", prevHigh, ", L:", prevLow,"). Cannot determine retracement. Conditions not met.");
+      else Print("CheckTradeConditions: Invalid _Point size or previous candle range is zero/negative. Conditions not met.");
+      return false;
+     }
+
+   double currentPrice = 0;
+   string tradeTypeStr = (orderType == ORDER_TYPE_BUY) ? "BUY" : "SELL";
+
+   if(orderType == ORDER_TYPE_BUY)
+     {
+      currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      if(currentPrice == 0)
+        {
+         Print("CheckTradeConditions: Could not get ASK price for ", tradeTypeStr, ". Conditions not met.");
+         return false;
+        }
+      
+      double requiredRetracementPrice = prevLow + (InpSignalThreshold / 100.0) * prevRange;
+      if(currentPrice < requiredRetracementPrice) // Condition not met
+        {
+         Print("CheckTradeConditions: ", tradeTypeStr, " condition not met. Current Ask: ", DoubleToString(currentPrice, _Digits), ", Required Price >= ", DoubleToString(requiredRetracementPrice, _Digits));
+         return false;
+        }
+     }
+   else // ORDER_TYPE_SELL
+     {
+      currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      if(currentPrice == 0)
+        {
+         Print("CheckTradeConditions: Could not get BID price for ", tradeTypeStr, ". Conditions not met.");
+         return false;
+        }
+      
+      double requiredRetracementPrice = prevHigh - (InpSignalThreshold / 100.0) * prevRange;
+      if(currentPrice > requiredRetracementPrice) // Condition not met
+        {
+         Print("CheckTradeConditions: ", tradeTypeStr, " condition not met. Current Bid: ", DoubleToString(currentPrice, _Digits), ", Required Price <= ", DoubleToString(requiredRetracementPrice, _Digits));
+         return false;
+        }
+     }
+   
+   Print("CheckTradeConditions: ", tradeTypeStr, " conditions MET. Current Price: ", DoubleToString(currentPrice, _Digits));
+   return true; // Conditions met
   }
 
 //+------------------------------------------------------------------+
@@ -732,6 +815,13 @@ int OnInit()
 //--- Initialize signal data structures
    ResetSignalDataTA(g_arrowBearish);
    ResetSignalDataTA(g_arrowBullish);
+
+//--- Initialize immediate pending trade variables (already done by global defaults)
+   // g_immediateTradePending = false;
+   // g_immediatePendingOrderType = WRONG_VALUE;
+   // g_pendingTradeCandleTime = 0;
+
+   Print("TradeAssistant EA initialized. Immediate Pending: ", g_immediateTradePending, ", NextCandle Pending: ", g_tradeOnNextCandlePending);
    return(INIT_SUCCEEDED);
   }
 //+------------------------------------------------------------------+
@@ -870,13 +960,13 @@ void OnTick()
    //--- Clean up old historical entry lines first
    CleanUpOldLinesTA();
 
-   //--- Safety check for pending indicator color
+   //--- Safety check for pending indicator color: If no pending actions, indicator should be gray.
    if(ObjectFind(0,g_pendingIndicatorName) == 0) 
      {
-      if (!g_tradeOnNextCandlePending && ObjectGetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, 0) != clrLightGray)
+      if (!g_tradeOnNextCandlePending && !g_immediateTradePending && ObjectGetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, 0) != clrLightGray)
         {
          ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
-         // ChartRedraw(); // Avoid redundant redraws
+         // ChartRedraw(); // Avoid redundant redraws, will be handled later if changes occur
         }
      }
 
@@ -897,11 +987,38 @@ void OnTick()
       // Process new bar for historical line drawing
       ProcessNewBarTA(); 
 
-      // Process pending "next candle" trade
-      if(g_tradeOnNextCandlePending && g_pendingOrderType != WRONG_VALUE)
+      // Process pending "next candle" trade IF NOT ALSO an immediate trade pending
+      // (Immediate pending logic below might handle it or expire it first in the same tick's new bar event)
+      if(g_tradeOnNextCandlePending && g_pendingOrderType != WRONG_VALUE && !g_immediateTradePending)
         {
-         Print("Executing pending order: ", EnumToString(g_pendingOrderType));
-         ExecuteTrade(g_pendingOrderType);
+         Print("OnTick/NewBar: Executing 'Next Candle' pending order: ", EnumToString(g_pendingOrderType));
+         ExecuteTrade(g_pendingOrderType); // This will reset flags if successful
+        }
+      // If an immediate trade was pending, the new bar means it has expired. This is handled below.
+     }
+
+   // --- Handle Immediate Pending Trade ---
+   if(g_immediateTradePending)
+     {
+      datetime currentCandleOpenTime = iTime(_Symbol, _Period, 0);
+      string pendingTypeStr = (g_immediatePendingOrderType == ORDER_TYPE_BUY) ? "BUY" : "SELL";
+
+      if(currentCandleOpenTime > g_pendingTradeCandleTime)
+        {
+         // Current candle has changed since pending was set; the pending immediate trade has expired.
+         Print("OnTick: Immediate pending ", pendingTypeStr, " trade EXPIRED due to new candle formation.");
+         g_immediateTradePending = false;
+         g_immediatePendingOrderType = WRONG_VALUE;
+         g_pendingTradeCandleTime = 0;
+         ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
+         ChartRedraw(); // Update indicator due to expiration
+        }
+      else
+        {
+         // Still the same candle, re-evaluate conditions
+         Print("OnTick: Re-evaluating conditions for IMMEDIATE PENDING ", pendingTypeStr, " trade.");
+         ExecuteTrade(g_immediatePendingOrderType); // ExecuteTrade will reset flags if successful or if it fails terminally.
+                                                  // If conditions are still not met, it does nothing to flags, and it remains pending.
         }
      }
    
@@ -997,6 +1114,41 @@ void OnTick()
      }
   }
 //+------------------------------------------------------------------+
+//| Attempt Immediate Trade Execution or Set Pending                 |
+//+------------------------------------------------------------------+
+void AttemptImmediateTradeExecution(ENUM_ORDER_TYPE orderType)
+  {
+   // First, ensure no other pending state is active from "next candle" mode
+   // This is now handled in OnChartEvent before this function is called.
+
+   bool conditionsMet = CheckTradeConditions(orderType); 
+   string tradeTypeStr = (orderType == ORDER_TYPE_BUY) ? "BUY" : "SELL";
+
+   if(conditionsMet)
+     {
+      Print("AttemptImmediateTradeExecution: Conditions met for ", tradeTypeStr, ". Executing trade.");
+      ExecuteTrade(orderType); // ExecuteTrade will call CheckTradeConditions again, but it's fine.
+                               // It will also handle indicator color if trade is made or fails at broker.
+     }
+   else
+     {
+      // Conditions not met (CheckTradeConditions already printed why), set up pending state for the current candle
+      // Ensure an immediate pending trade of the opposite type is cancelled.
+      // This is also handled in OnChartEvent before this function is called.
+
+      g_immediateTradePending = true;
+      g_immediatePendingOrderType = orderType;
+      g_pendingTradeCandleTime = iTime(_Symbol, _Period, 0);
+
+      color pendingColor = (orderType == ORDER_TYPE_BUY) ? clrPendingImmediateBuy : clrPendingImmediateSell;
+      ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, pendingColor);
+      
+      Print("AttemptImmediateTradeExecution: Conditions NOT met for ", tradeTypeStr, ". Trade set to PENDING for current candle. Indicator: ", ColorToString(pendingColor));
+      ChartRedraw(); // Ensure indicator color updates
+     }
+  }
+
+//+------------------------------------------------------------------+
 //| ChartEvent function                                              |
 //+------------------------------------------------------------------+
 void OnChartEvent(const int id,
@@ -1013,85 +1165,159 @@ void OnChartEvent(const int id,
 
       if(sparam == g_buyButtonName)
         {
-         // Print message now uses g_currentExecutionType, which is good.
-         Print("Buy button clicked. Execution Type: ", EnumToString(g_currentExecutionType)); 
-         if(g_currentExecutionType == EXECUTE_IMMEDIATE) // Condition already uses g_currentExecutionType
+         Print("Buy button clicked. Execution Type: ", EnumToString(g_currentExecutionType));
+         if(g_currentExecutionType == EXECUTE_IMMEDIATE)
            {
-            ExecuteTrade(ORDER_TYPE_BUY);
+            // If a "next candle" trade was pending, cancel it.
+            if(g_tradeOnNextCandlePending)
+              {
+               Print("Cancelling previously armed 'Next Candle' trade due to new 'Immediate' Buy request.");
+               g_tradeOnNextCandlePending = false;
+               g_pendingOrderType = WRONG_VALUE;
+               // Indicator color will be updated by AttemptImmediateTradeExecution or ExecuteTrade
+              }
+            // Also cancel any immediate pending trade of the opposite type
+            if(g_immediateTradePending && g_immediatePendingOrderType == ORDER_TYPE_SELL)
+              {
+                Print("Cancelling previous immediate SELL pending trade due to new BUY request.");
+                g_immediateTradePending = false;
+                g_immediatePendingOrderType = WRONG_VALUE;
+                g_pendingTradeCandleTime = 0;
+              }
+            AttemptImmediateTradeExecution(ORDER_TYPE_BUY);
            }
          else // EXECUTE_ON_NEXT_CANDLE
            {
+            // Cancel any immediate pending trade if user is now setting a "next candle" trade
+            if(g_immediateTradePending)
+              {
+               Print("Cancelling previously armed 'Immediate' pending trade due to new 'Next Candle' Buy request.");
+               g_immediateTradePending = false;
+               g_immediatePendingOrderType = WRONG_VALUE;
+               g_pendingTradeCandleTime = 0;
+               // Indicator will be set below for next candle trade or cleared if conflicting
+              }
+
             if(g_tradeOnNextCandlePending && g_pendingOrderType == ORDER_TYPE_SELL)
               {
-               Print("A Sell order is already pending for the next candle. Cannot set a Buy order simultaneously.");
+               Print("A Sell order is already pending for the next candle. Cannot set a Buy order simultaneously. Sell pending remains.");
               }
             else
               {
                g_tradeOnNextCandlePending = true;
                g_pendingOrderType = ORDER_TYPE_BUY;
-               ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrGreen);
-               Print("Buy order armed. Will execute on the next candle open.");
+               ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrGreen); // Next Candle Buy = Green
+               Print("Buy order armed for Next Candle. Indicator: Green.");
               }
            }
         }
       else if(sparam == g_sellButtonName)
         {
-         // Print message now uses g_currentExecutionType, which is good.
          Print("Sell button clicked. Execution Type: ", EnumToString(g_currentExecutionType));
-         if(g_currentExecutionType == EXECUTE_IMMEDIATE) // Condition already uses g_currentExecutionType
+         if(g_currentExecutionType == EXECUTE_IMMEDIATE)
            {
-            ExecuteTrade(ORDER_TYPE_SELL); // ExecuteTrade will reset indicator to gray
+            // If a "next candle" trade was pending, cancel it.
+            if(g_tradeOnNextCandlePending)
+              {
+               Print("Cancelling previously armed 'Next Candle' trade due to new 'Immediate' Sell request.");
+               g_tradeOnNextCandlePending = false;
+               g_pendingOrderType = WRONG_VALUE;
+              }
+            // Also cancel any immediate pending trade of the opposite type
+            if(g_immediateTradePending && g_immediatePendingOrderType == ORDER_TYPE_BUY)
+              {
+                Print("Cancelling previous immediate BUY pending trade due to new SELL request.");
+                g_immediateTradePending = false;
+                g_immediatePendingOrderType = WRONG_VALUE;
+                g_pendingTradeCandleTime = 0;
+              }
+            AttemptImmediateTradeExecution(ORDER_TYPE_SELL);
            }
          else // EXECUTE_ON_NEXT_CANDLE
            {
+            // Cancel any immediate pending trade if user is now setting a "next candle" trade
+            if(g_immediateTradePending)
+              {
+               Print("Cancelling previously armed 'Immediate' pending trade due to new 'Next Candle' Sell request.");
+               g_immediateTradePending = false;
+               g_immediatePendingOrderType = WRONG_VALUE;
+               g_pendingTradeCandleTime = 0;
+              }
+
             if(g_tradeOnNextCandlePending && g_pendingOrderType == ORDER_TYPE_BUY)
               {
-               Print("A Buy order is already pending for the next candle. Cannot set a Sell order simultaneously. Current pending Buy indicator remains (Green).");
+               Print("A Buy order is already pending for the next candle. Cannot set a Sell order simultaneously. Buy pending remains.");
               }
             else
               {
                g_tradeOnNextCandlePending = true;
                g_pendingOrderType = ORDER_TYPE_SELL;
-               ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrRed);
-               Print("Sell order armed. Will execute on the next candle open.");
+               ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrRed); // Next Candle Sell = Red
+               Print("Sell order armed for Next Candle. Indicator: Red.");
               }
            }
         }
       else if(sparam == g_execTypeButtonName)
         {
-         // Store old type to know if we are switching *from* NextCandle or *to* NextCandle
-         EnumExecutionType previousExecutionType = g_currentExecutionType;
-         
-         // Toggle the execution type state
-         if(g_currentExecutionType == EXECUTE_IMMEDIATE)
+         Print("Execution type button clicked.");
+         if(g_currentExecutionType == EXECUTE_IMMEDIATE) // Switching from Immediate to Next Candle
            {
             g_currentExecutionType = EXECUTE_ON_NEXT_CANDLE;
             ObjectSetString(0, g_execTypeButtonName, OBJPROP_TEXT, "Exec: Next");
-            Print("Execution type changed to: Next Candle");
-            // If switching to NextCandle and nothing is currently pending, ensure indicator is neutral gray.
-            // If a trade becomes pending later (by clicking Buy/Sell), it will turn Red/Green.
-            if (!g_tradeOnNextCandlePending)
+            Print("Execution type changed to: Next Candle.");
+            // If an immediate trade was pending, cancel it.
+            if(g_immediateTradePending)
               {
-               ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
+               Print("Cancelling active 'Immediate' pending trade due to switch to 'Next Candle' mode.");
+               g_immediateTradePending = false;
+               g_immediatePendingOrderType = WRONG_VALUE;
+               g_pendingTradeCandleTime = 0;
+               ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray); // Reset indicator
+               Print("Immediate pending trade cancelled. Indicator: Gray.");
+              }
+            // If nothing is pending (neither immediate nor next candle), indicator should be gray.
+            // If a next candle trade *was* pending (unlikely if immediate was active, but for completeness)
+            // and immediate was not, the next candle pending state would persist.
+            // The current logic ensures only one type of pending can be active.
+            // So, if immediateTradePending was false, we just check if g_tradeOnNextCandlePending is also false.
+            if (!g_tradeOnNextCandlePending && !g_immediateTradePending) //This check is after we've potentially cleared immediateTradePending
+              {
+                 ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
+                 Print("No trades pending. Indicator: Gray.");
+              }
+            else if (g_tradeOnNextCandlePending) // If a next candle trade is already pending (e.g. from before immediate mode was even entered)
+              {
+                // Color should already be Red/Green, do nothing to indicator here.
+                Print("Existing 'Next Candle' pending trade remains active.");
               }
            }
-         else // Current was EXECUTE_ON_NEXT_CANDLE, now switching to EXECUTE_IMMEDIATE
+         else // Current was EXECUTE_ON_NEXT_CANDLE, switching to Immediate
            {
             g_currentExecutionType = EXECUTE_IMMEDIATE;
             ObjectSetString(0, g_execTypeButtonName, OBJPROP_TEXT, "Exec: Imm");
-            Print("Execution type changed to: Immediate");
-
-            // If a trade was pending from the previous NextCandle mode, cancel it and reset indicator.
-            if (g_tradeOnNextCandlePending) 
+            Print("Execution type changed to: Immediate.");
+            // If a "next candle" trade was pending, cancel it.
+            if (g_tradeOnNextCandlePending)
               {
-               ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
-               g_tradeOnNextCandlePending = false; // Cancel the pending trade
+               Print("Cancelling active 'Next Candle' pending trade due to switch to 'Immediate' mode.");
+               g_tradeOnNextCandlePending = false;
                g_pendingOrderType = WRONG_VALUE;
-               Print("Pending next candle trade automatically cancelled: mode switched to Immediate.");
+               ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray); // Reset indicator
+               Print("Next candle pending trade cancelled. Indicator: Gray.");
+              }
+            // If an immediate trade was somehow pending (not possible with current logic flow but defensive)
+            if(g_immediateTradePending)
+              {
+                // Color should already be Orange/DarkOrange, do nothing to indicator.
+                 Print("Existing 'Immediate' pending trade remains active.");
+              }
+            // If nothing is pending
+            if (!g_tradeOnNextCandlePending && !g_immediateTradePending)
+              {
+                 ObjectSetInteger(0, g_pendingIndicatorName, OBJPROP_BGCOLOR, clrLightGray);
+                 Print("No trades pending. Indicator: Gray.");
               }
            }
-         // ChartRedraw() is called at the start of CHARTEVENT_OBJECT_CLICK, which covers button text and indicator color changes.
-         // No need for an explicit ChartRedraw() here unless there's a specific reason for immediate visual feedback before other logic.
         }
      }
   }
