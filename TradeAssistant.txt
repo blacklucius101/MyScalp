@@ -8,16 +8,6 @@
 #property version   "1.00"
 #property description "TradeAssistant"
 
-//--- Enum for MACD Chaikin Signal Values (mirroring the indicator's definitions)
-enum enMacdChaikinSignalValues
-{
-   SIGNAL_STRONG_BULL = 0,    // Both MACD and Chaikin bullish
-   SIGNAL_STRONG_BEAR = 1,    // Both MACD and Chaikin bearish
-   SIGNAL_WEAK_BULL   = 2,    // Only MACD bullish
-   SIGNAL_WEAK_BEAR   = 3,    // Only MACD bearish
-   SIGNAL_NONE        = -1    // No clear signal
-};
-
 //--- Input parameters for trade levels
 input group "Trade Levels (in Points)"
 input int InpTakeProfit = 5000;       // Take Profit in points
@@ -41,10 +31,6 @@ enum EnumExecutionType
    EXECUTE_ON_NEXT_CANDLE // Execute on the open of the next candle
   };
 input EnumExecutionType InpExecutionType = EXECUTE_ON_NEXT_CANDLE; // Trade execution type
-
-//--- Input parameter for MACD Chaikin Indicator
-input group "Custom Indicators"
-input string InpMacdChaikinIndicatorPath = "Custom\\MACD_Chaikin_Color_Bars"; // Path to the MACD Chaikin Color Bars indicator
 
 //--- Input parameters for visual elements (e.g., button labels, colors) - to be added later if needed
 
@@ -101,7 +87,6 @@ const color clrPendingImmediateSell = clrMagenta;
 SignalData g_arrowBearish;    
 SignalData g_arrowBullish;    
 int g_zzSemaforHandle = INVALID_HANDLE; 
-int g_macdChaikinHandle = INVALID_HANDLE; 
 //+------------------------------------------------------------------+
 //| Execute Trade Operation                                          |
 //+------------------------------------------------------------------+
@@ -282,79 +267,10 @@ bool CheckTradeConditions(ENUM_ORDER_TYPE orderType)
    
    Print("CheckTradeConditions: ", tradeTypeStr, " retracement conditions MET. Current Price: ", DoubleToString(currentPrice, _Digits));
 
-   // --- MACD Chaikin Confirmation for EXECUTE_IMMEDIATE mode ---
-   if(g_currentExecutionType == EXECUTE_IMMEDIATE)
-     {
-      if(g_macdChaikinHandle == INVALID_HANDLE)
-        {
-         Print("CheckTradeConditions: MACD Chaikin indicator handle is invalid. Cannot get confirmation signal. ", tradeTypeStr, " conditions NOT MET.");
-         return false;
-        }
+   // MACD Chaikin Confirmation has been removed. 
+   // If EXECUTE_IMMEDIATE, the retracement condition is now the only condition from this function.
 
-      double macdChaikinSignalPrev[];
-      double macdChaikinSignalCurr[];
-      ArrayResize(macdChaikinSignalPrev, 1);
-      ArrayResize(macdChaikinSignalCurr, 1);
-
-      if(CopyBuffer(g_macdChaikinHandle, 5, 1, 1, macdChaikinSignalPrev) != 1)
-        {
-         Print("CheckTradeConditions: Failed to copy MACD Chaikin signal for previous candle. Error: ", GetLastError(), ". ", tradeTypeStr, " conditions NOT MET.");
-         return false;
-        }
-
-      if(CopyBuffer(g_macdChaikinHandle, 5, 0, 1, macdChaikinSignalCurr) != 1)
-        {
-         Print("CheckTradeConditions: Failed to copy MACD Chaikin signal for current candle. Error: ", GetLastError(), ". ", tradeTypeStr, " conditions NOT MET.");
-         return false;
-        }
-
-      enMacdChaikinSignalValues prevSignal = (enMacdChaikinSignalValues)macdChaikinSignalPrev[0];
-      enMacdChaikinSignalValues currSignal = (enMacdChaikinSignalValues)macdChaikinSignalCurr[0];
-      
-      Print("CheckTradeConditions: MACD Chaikin Prev Signal: ", EnumToString(prevSignal), ", Curr Signal: ", EnumToString(currSignal));
-
-      if(orderType == ORDER_TYPE_BUY)
-        {
-         bool confirmed = false;
-         if(prevSignal == SIGNAL_STRONG_BEAR && (currSignal == SIGNAL_STRONG_BULL || currSignal == SIGNAL_WEAK_BEAR))
-           {
-            confirmed = true;
-           }
-         else if(prevSignal == SIGNAL_WEAK_BEAR && currSignal == SIGNAL_STRONG_BULL)
-           {
-            confirmed = true;
-           }
-
-         if(!confirmed)
-           {
-            Print("CheckTradeConditions: BUY MACD Chaikin confirmation FAILED. Prev: ", EnumToString(prevSignal), ", Curr: ", EnumToString(currSignal));
-            return false;
-           }
-         Print("CheckTradeConditions: BUY MACD Chaikin confirmation PASSED.");
-        }
-      else // ORDER_TYPE_SELL
-        {
-         bool confirmed = false;
-         if(prevSignal == SIGNAL_STRONG_BULL && (currSignal == SIGNAL_STRONG_BEAR || currSignal == SIGNAL_WEAK_BULL))
-           {
-            confirmed = true;
-           }
-         else if(prevSignal == SIGNAL_WEAK_BULL && currSignal == SIGNAL_STRONG_BEAR)
-           {
-            confirmed = true;
-           }
-           
-         if(!confirmed)
-           {
-            Print("CheckTradeConditions: SELL MACD Chaikin confirmation FAILED. Prev: ", EnumToString(prevSignal), ", Curr: ", EnumToString(currSignal));
-            return false;
-           }
-         Print("CheckTradeConditions: SELL MACD Chaikin confirmation PASSED.");
-        }
-     }
-   // --- End of MACD Chaikin Confirmation ---
-
-   Print("CheckTradeConditions: ALL ", tradeTypeStr, " conditions MET.");
+   Print("CheckTradeConditions: ALL ", tradeTypeStr, " conditions (retracement only) MET.");
    return true; 
   }
 
@@ -535,7 +451,7 @@ void DrawEntryLineTA(string prefix, datetime signalTime, double price, color lin
 void CleanUpOldLinesTA()
   {
    datetime currentTime = TimeCurrent();
-   datetime expirationTimeThreshold = currentTime - (PeriodSeconds() * (g_lineDurationBars + 3)); 
+   datetime expirationTimeThreshold = currentTime - (PeriodSeconds() * (g_lineDurationBars + 10)); 
 
    int totalObjects = ObjectsTotal(0, 0, OBJ_TREND); 
    bool chartNeedsRedraw = false; 
@@ -804,20 +720,6 @@ int OnInit()
    ResetSignalDataTA(g_arrowBearish);
    ResetSignalDataTA(g_arrowBullish);
 
-   //--- Load MACD Chaikin Color Bars indicator ---
-   g_macdChaikinHandle = iCustom(NULL, 0, InpMacdChaikinIndicatorPath);
-   if(g_macdChaikinHandle == INVALID_HANDLE)
-     {
-      Print("Error: Failed to load MACD Chaikin Color Bars indicator from path: '", InpMacdChaikinIndicatorPath, "'. EA cannot continue with this confirmation.");
-      Alert("Failed to load MACD Chaikin indicator. Please ensure 'MQL5\\Indicators\\", InpMacdChaikinIndicatorPath, "' exists and the path is correct in EA inputs.");
-      return(INIT_FAILED);
-     }
-   else
-     {
-      Print("MACD Chaikin Color Bars indicator loaded successfully. Handle: ", g_macdChaikinHandle);
-     }
-   // --- End Load MACD Chaikin ---
-
    Print("TradeAssistant EA initialized. Immediate Pending: ", g_immediateTradePending, ", NextCandle Pending: ", g_tradeOnNextCandlePending);
    return(INIT_SUCCEEDED);
   }
@@ -831,13 +733,6 @@ void OnDeinit(const int reason)
       IndicatorRelease(g_zzSemaforHandle);
       Print("Single_Level_ZZ_Semafor indicator released. Handle: ", g_zzSemaforHandle);
       g_zzSemaforHandle = INVALID_HANDLE; 
-     }
-
-   if(g_macdChaikinHandle != INVALID_HANDLE)
-     {
-      IndicatorRelease(g_macdChaikinHandle);
-      Print("MACD Chaikin Color Bars indicator released. Handle: ", g_macdChaikinHandle);
-      g_macdChaikinHandle = INVALID_HANDLE; 
      }
 
    ObjectDelete(0, g_buyButtonName);
