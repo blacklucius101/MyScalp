@@ -34,7 +34,7 @@ input int    Deviation1 = 1;     // Deviation (points)
 input int    Backstep1 = 1;      // Back Step
 input int    HighSymbol1 = 159;  // High arrow symbol
 input int    LowSymbol1 = 159;   // Low arrow symbol
-input bool   EnableAlerts = true;// Enable Sound Alerts
+input bool   EnableAlerts = false;// Enable Sound Alerts
 
 //+----------------------------------------------+
 //|  Indicator buffers                           |
