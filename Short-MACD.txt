@@ -24,7 +24,7 @@
 //--- drawing indicator as a colored line
 #property indicator_type1 DRAW_COLOR_LINE
 //--- colors of the line are as follows
-#property indicator_color1 clrRed,clrLime,clrGray,clrOrange,clrGreen
+#property indicator_color1 clrCrimson,clrLime,clrGray,clrOrange,clrGreen
 //--- indicator line is a solid one
 #property indicator_style1 STYLE_SOLID
 //--- indicator line width is 2 (can be increased for better visibility)
