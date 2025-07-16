@@ -24,7 +24,7 @@
 //--- drawing indicator as a colored line
 #property indicator_type1 DRAW_COLOR_LINE
 //--- colors of the line are as follows
-#property indicator_color1 clrBrown,clrViolet,clrGray,clrDeepSkyBlue,clrBlue
+#property indicator_color1 clrRed,clrLime,clrGray,clrOrange,clrGreen
 //--- indicator line is a solid one
 #property indicator_style1 STYLE_SOLID
 //--- indicator line width is 2 (can be increased for better visibility)
@@ -138,13 +138,13 @@ int OnCalculate(const int rates_total,    // number of bars in history at the cu
       int clr=2; // default gray color
       if(LineBuffer[bar]>0)
         {
-         if(LineBuffer[bar]>LineBuffer[bar+1]) clr=4; // blue - bullish momentum increasing
-         if(LineBuffer[bar]<LineBuffer[bar+1]) clr=3; // deepskyblue - bullish momentum decreasing
+         if(LineBuffer[bar]>LineBuffer[bar+1]) clr=4; // green - bullish momentum increasing
+         if(LineBuffer[bar]<LineBuffer[bar+1]) clr=3; // orange - bullish momentum decreasing
         }
       if(LineBuffer[bar]<0)
         {
-         if(LineBuffer[bar]<LineBuffer[bar+1]) clr=0; // brown - bearish momentum increasing
-         if(LineBuffer[bar]>LineBuffer[bar+1]) clr=1; // violet - bearish momentum decreasing
+         if(LineBuffer[bar]<LineBuffer[bar+1]) clr=0; // red - bearish momentum increasing
+         if(LineBuffer[bar]>LineBuffer[bar+1]) clr=1; // lime - bearish momentum decreasing
         }
       ColorBuffer[bar]=clr;
      }
