@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//|                                                           BB.mq5 |
+//|                                                  labelled-BB.mq5 |
 //|                             Copyright 2000-2025, MetaQuotes Ltd. |
 //|                                             https://www.mql5.com |
 //+------------------------------------------------------------------+
@@ -21,9 +21,12 @@
 #property indicator_label2  "Bands upper"
 #property indicator_label3  "Bands lower"
 //--- input parametrs
-input int     InpBandsPeriod=20;       // Period
+input int     InpBandsPeriod=10;       // Period
 input int     InpBandsShift=0;         // Shift
 input double  InpBandsDeviations=2.0;  // Deviation
+//--- labels
+input color   InpLabelColor=clrWhite;  // Label color
+input int     InpLabelFontSize=8;      // Label font size
 //--- global variables
 int           ExtBandsPeriod,ExtBandsShift;
 double        ExtBandsDeviations;
@@ -82,6 +85,30 @@ void OnInit()
    PlotIndexSetInteger(2,PLOT_SHIFT,ExtBandsShift);
 //--- number of digits of indicator value
    IndicatorSetInteger(INDICATOR_DIGITS,_Digits+1);
+//--- create labels
+   ObjectCreate(0,"PriceLabel",OBJ_LABEL,0,0,0);
+   ObjectSetString(0,"PriceLabel",OBJPROP_TEXT,"Price:");
+   ObjectSetInteger(0,"PriceLabel",OBJPROP_CORNER,CORNER_RIGHT_UPPER);
+   ObjectSetInteger(0,"PriceLabel",OBJPROP_XDISTANCE,150);
+   ObjectSetInteger(0,"PriceLabel",OBJPROP_YDISTANCE,15);
+   ObjectSetInteger(0,"PriceLabel",OBJPROP_COLOR,InpLabelColor);
+   ObjectSetInteger(0,"PriceLabel",OBJPROP_FONTSIZE,InpLabelFontSize);
+
+   ObjectCreate(0,"UpperBandLabel",OBJ_LABEL,0,0,0);
+   ObjectSetString(0,"UpperBandLabel",OBJPROP_TEXT,"Upper Band:");
+   ObjectSetInteger(0,"UpperBandLabel",OBJPROP_CORNER,CORNER_RIGHT_UPPER);
+   ObjectSetInteger(0,"UpperBandLabel",OBJPROP_XDISTANCE,150);
+   ObjectSetInteger(0,"UpperBandLabel",OBJPROP_YDISTANCE,30);
+   ObjectSetInteger(0,"UpperBandLabel",OBJPROP_COLOR,InpLabelColor);
+   ObjectSetInteger(0,"UpperBandLabel",OBJPROP_FONTSIZE,InpLabelFontSize);
+
+   ObjectCreate(0,"LowerBandLabel",OBJ_LABEL,0,0,0);
+   ObjectSetString(0,"LowerBandLabel",OBJPROP_TEXT,"Lower Band:");
+   ObjectSetInteger(0,"LowerBandLabel",OBJPROP_CORNER,CORNER_RIGHT_UPPER);
+   ObjectSetInteger(0,"LowerBandLabel",OBJPROP_XDISTANCE,150);
+   ObjectSetInteger(0,"LowerBandLabel",OBJPROP_YDISTANCE,45);
+   ObjectSetInteger(0,"LowerBandLabel",OBJPROP_COLOR,InpLabelColor);
+   ObjectSetInteger(0,"LowerBandLabel",OBJPROP_FONTSIZE,InpLabelFontSize);
   }
 //+------------------------------------------------------------------+
 //| Bollinger Bands                                                  |
@@ -119,6 +146,19 @@ int OnCalculate(const int rates_total,
       //--- lower line
       ExtBLBuffer[i]=ExtMLBuffer[i]-ExtBandsDeviations*ExtStdDevBuffer[i];
      }
+//--- update labels
+   string price_pos;
+   if(price[rates_total-1]>ExtMLBuffer[rates_total-1])
+      price_pos="Above";
+   else
+      price_pos="Below";
+   ObjectSetString(0,"PriceLabel",OBJPROP_TEXT,"Price: "+price_pos+" MA");
+
+   double upper_dist=(ExtTLBuffer[rates_total-1]-ExtMLBuffer[rates_total-1])/_Point;
+   ObjectSetString(0,"UpperBandLabel",OBJPROP_TEXT,"Upper Band Dist: "+DoubleToString(upper_dist,0));
+
+   double lower_dist=(ExtMLBuffer[rates_total-1]-ExtBLBuffer[rates_total-1])/_Point;
+   ObjectSetString(0,"LowerBandLabel",OBJPROP_TEXT,"Lower Band Dist: "+DoubleToString(lower_dist,0));
 //--- OnCalculate done. Return new prev_calculated.
    return(rates_total);
   }
@@ -137,5 +177,15 @@ double StdDev_Func(const int position,const double &price[],const double &ma_pri
      }
 //--- return calculated value
    return(std_dev);
+  }
+//+------------------------------------------------------------------+
+//| Custom indicator deinitialization function                       |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+//--- remove labels
+   ObjectDelete(0,"PriceLabel");
+   ObjectDelete(0,"UpperBandLabel");
+   ObjectDelete(0,"LowerBandLabel");
   }
 //+------------------------------------------------------------------+
