@@ -1,0 +1,125 @@
+//+------------------------------------------------------------------+
+//|                                 Candle_Retracement.mq5 |
+//|                        Copyright 2023, MetaQuotes Software Corp. |
+//|                                             https://www.mql5.com |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2023, MetaQuotes Software Corp."
+#property link      "https://www.mql5.com"
+#property version   "1.00"
+#property indicator_chart_window
+
+//--- indicator buffers
+double HighRetBuffer[];
+double LowRetBuffer[];
+
+//+------------------------------------------------------------------+
+//| Custom indicator initialization function                         |
+//+------------------------------------------------------------------+
+void OnInit()
+  {
+//--- indicator buffers mapping
+   SetIndexBuffer(0, HighRetBuffer, INDICATOR_DATA);
+   SetIndexBuffer(1, LowRetBuffer, INDICATOR_DATA);
+
+//--- labels
+   ObjectCreate(0, "HighRetLabel", OBJ_LABEL, 0, 0, 0);
+   ObjectSetString(0, "HighRetLabel", OBJPROP_TEXT, "High ret:");
+   ObjectSetInteger(0, "HighRetLabel", OBJPROP_COLOR, clrMagenta);
+   ObjectSetInteger(0, "HighRetLabel", OBJPROP_XDISTANCE, 10);
+   ObjectSetInteger(0, "HighRetLabel", OBJPROP_YDISTANCE, 15);
+
+   ObjectCreate(0, "LowRetLabel", OBJ_LABEL, 0, 0, 0);
+   ObjectSetString(0, "LowRetLabel", OBJPROP_TEXT, "Low ret:");
+   ObjectSetInteger(0, "LowRetLabel", OBJPROP_COLOR, clrAqua);
+   ObjectSetInteger(0, "LowRetLabel", OBJPROP_XDISTANCE, 10);
+   ObjectSetInteger(0, "LowRetLabel", OBJPROP_YDISTANCE, 30);
+
+//--- create movable vertical line
+   string line_name = "IdentifiedCandleLine";
+   if(ObjectFind(0, line_name) < 0)
+     {
+      ObjectCreate(0, line_name, OBJ_VLINE, 0, TimeCurrent(), 0);
+      ObjectSetInteger(0, line_name, OBJPROP_COLOR, clrGray);
+      ObjectSetInteger(0, line_name, OBJPROP_STYLE, STYLE_DOT);
+      ObjectSetInteger(0, line_name, OBJPROP_SELECTABLE, true);
+      ObjectSetInteger(0, line_name, OBJPROP_SELECTED, true);
+      ObjectSetInteger(0, line_name, OBJPROP_BACK, true);
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| Custom indicator iteration function                              |
+//+------------------------------------------------------------------+
+int OnCalculate(const int rates_total,
+                const int prev_calculated,
+                const datetime &time[],
+                const double &open[],
+                const double &high[],
+                const double &low[],
+                const double &close[],
+                const long &tick_volume[],
+                const long &volume[],
+                const int &spread[])
+  {
+//--- get line time
+   string line_name = "IdentifiedCandleLine";
+   datetime line_time = (datetime)ObjectGetInteger(0, line_name, OBJPROP_TIME);
+
+//--- time to bar index
+   int identified_candle_index = -1;
+   for(int i = rates_total - 1; i >= 0; i--)
+     {
+      if(time[i] == line_time)
+        {
+         identified_candle_index = i;
+         break;
+        }
+     }
+
+   if(identified_candle_index < 0)
+      return(0);
+
+//---
+   int i = rates_total - 1;
+
+//--- identified candle
+   double identified_high = high[identified_candle_index];
+   double identified_low = low[identified_candle_index];
+   double identified_range = identified_high - identified_low;
+
+//--- current price
+   double current_price = close[i];
+
+//--- calculations
+   double high_ret = 0;
+   double low_ret = 0;
+
+   if(identified_range > 0)
+     {
+      high_ret = ((identified_high - current_price) / identified_range) * 100;
+      low_ret = ((current_price - identified_low) / identified_range) * 100;
+     }
+
+//--- display values
+   ObjectSetString(0, "HighRetLabel", OBJPROP_TEXT, "High ret: " + DoubleToString(high_ret, 2) + "%");
+   ObjectSetString(0, "LowRetLabel", OBJPROP_TEXT, "Low ret: " + DoubleToString(low_ret, 2) + "%");
+
+//---
+   return(rates_total);
+  }
+//+------------------------------------------------------------------+
+//| ChartEvent function                                              |
+//+------------------------------------------------------------------+
+void OnChartEvent(const int id,
+                  const long &lparam,
+                  const double &dparam,
+                  const string &sparam)
+  {
+//--- if the object has been moved
+   if(id == CHARTEVENT_OBJECT_DRAG)
+     {
+      //--- redraw the chart
+      ChartRedraw();
+     }
+  }
+//+------------------------------------------------------------------+
