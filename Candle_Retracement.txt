@@ -8,9 +8,23 @@
 #property version   "1.00"
 #property indicator_chart_window
 
+input int InpRetracementPercentage = 50; // Retracement percentage
+
 //--- indicator buffers
 double HighRetBuffer[];
 double LowRetBuffer[];
+
+//+------------------------------------------------------------------+
+//| Delete Objects                                                   |
+//+------------------------------------------------------------------+
+void DeleteIndicatorObjects()
+  {
+   ObjectDelete(0, "HighRetLabel");
+   ObjectDelete(0, "LowRetLabel");
+   ObjectDelete(0, "IdentifiedCandleLine");
+   ObjectDelete(0, "HighRetLine");
+   ObjectDelete(0, "LowRetLine");
+  }
 
 //+------------------------------------------------------------------+
 //| Custom indicator initialization function                         |
@@ -22,7 +36,7 @@ void OnInit()
    SetIndexBuffer(1, LowRetBuffer, INDICATOR_DATA);
 
 //--- clean up existing objects
-   ObjectsDeleteAll(0, 0, -1);
+   DeleteIndicatorObjects();
 
 //--- labels
    ObjectCreate(0, "HighRetLabel", OBJ_LABEL, 0, 0, 0);
@@ -60,7 +74,7 @@ void OnInit()
 void OnDeinit(const int reason)
   {
 //--- clean up all objects created by the indicator
-   ObjectsDeleteAll(0, 0, -1);
+   DeleteIndicatorObjects();
   }
 
 //+------------------------------------------------------------------+
@@ -120,22 +134,55 @@ int OnCalculate(const int rates_total,
    ObjectSetString(0, "HighRetLabel", OBJPROP_TEXT, "High ret: " + DoubleToString(high_ret, 2) + "%");
    ObjectSetString(0, "LowRetLabel", OBJPROP_TEXT, "Low ret: " + DoubleToString(low_ret, 2) + "%");
 
+//--- draw lines
+   DrawRetracementLines(identified_candle_index, identified_high, identified_low);
+
 //---
    return(rates_total);
   }
+
 //+------------------------------------------------------------------+
-//| ChartEvent function                                              |
+//| Draw Retracement Lines                                           |
 //+------------------------------------------------------------------+
-void OnChartEvent(const int id,
-                  const long &lparam,
-                  const double &dparam,
-                  const string &sparam)
+void DrawRetracementLines(int identified_candle_index, double identified_high, double identified_low)
   {
-//--- if the object has been moved
-   if(id == CHARTEVENT_OBJECT_DRAG)
+   string high_line_name = "HighRetLine";
+   string low_line_name = "LowRetLine";
+
+   double high_level = identified_high - (identified_high - identified_low) * (InpRetracementPercentage / 100.0);
+   double low_level = identified_low + (identified_high - identified_low) * (InpRetracementPercentage / 100.0);
+
+   datetime start_time = iTime(_Symbol, _Period, identified_candle_index);
+   datetime end_time = iTime(_Symbol, _Period, 0);
+
+   // High line
+   if(ObjectFind(0, high_line_name) < 0)
      {
-      //--- redraw the chart
-      ChartRedraw();
+      ObjectCreate(0, high_line_name, OBJ_TREND, 0, start_time, high_level, end_time, high_level);
+      ObjectSetInteger(0, high_line_name, OBJPROP_COLOR, clrMagenta);
+      ObjectSetInteger(0, high_line_name, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, high_line_name, OBJPROP_STYLE, STYLE_DOT);
+      ObjectSetInteger(0, high_line_name, OBJPROP_RAY_RIGHT, false);
+      ObjectSetInteger(0, high_line_name, OBJPROP_SELECTABLE, false);
      }
+   ObjectSetInteger(0, high_line_name, OBJPROP_TIME, 0, start_time);
+   ObjectSetDouble(0, high_line_name, OBJPROP_PRICE, 0, high_level);
+   ObjectSetInteger(0, high_line_name, OBJPROP_TIME, 1, end_time);
+   ObjectSetDouble(0, high_line_name, OBJPROP_PRICE, 1, high_level);
+
+   // Low line
+   if(ObjectFind(0, low_line_name) < 0)
+     {
+      ObjectCreate(0, low_line_name, OBJ_TREND, 0, start_time, low_level, end_time, low_level);
+      ObjectSetInteger(0, low_line_name, OBJPROP_COLOR, clrAqua);
+      ObjectSetInteger(0, low_line_name, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, low_line_name, OBJPROP_STYLE, STYLE_DOT);
+      ObjectSetInteger(0, low_line_name, OBJPROP_RAY_RIGHT, false);
+      ObjectSetInteger(0, low_line_name, OBJPROP_SELECTABLE, false);
+     }
+   ObjectSetInteger(0, low_line_name, OBJPROP_TIME, 0, start_time);
+   ObjectSetDouble(0, low_line_name, OBJPROP_PRICE, 0, low_level);
+   ObjectSetInteger(0, low_line_name, OBJPROP_TIME, 1, end_time);
+   ObjectSetDouble(0, low_line_name, OBJPROP_PRICE, 1, low_level);
   }
 //+------------------------------------------------------------------+
