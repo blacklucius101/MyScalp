@@ -1,4 +1,4 @@
-Candle_Retracement_EA//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //|                                     Candle_Retracement_EA.mq5 |
 //|                        Copyright 2023, MetaQuotes Software Corp. |
 //|                                             https://www.mql5.com |
@@ -78,61 +78,39 @@ void OnTick()
 //| Update Retracement                                               |
 //+------------------------------------------------------------------+
 void UpdateRetracement()
-  {
-   datetime time[];
-   double open[], high[], low[], close[];
-   long tick_volume[], volume[];
-   int spread[];
+{
+    datetime line_time = (datetime)ObjectGetInteger(0, "IdentifiedCandleLine", OBJPROP_TIME);
+    int identified_candle_index = iBarShift(_Symbol, _Period, line_time);
+    
+    if(identified_candle_index < 0)
+    {
+        ObjectSetString(0, "HighRetLabel", OBJPROP_TEXT, "High ret: 0.00%");
+        ObjectSetString(0, "LowRetLabel", OBJPROP_TEXT, "Low ret: 0.00%");
+        ObjectSetInteger(0, "HighRetLine", OBJPROP_COLOR, clrNONE);
+        ObjectSetInteger(0, "LowRetLine", OBJPROP_COLOR, clrNONE);
+        return;
+    }
 
-   CopyTime(_Symbol, _Period, 0, Bars(_Symbol, _Period), time);
-   CopyHigh(_Symbol, _Period, 0, Bars(_Symbol, _Period), high);
-   CopyLow(_Symbol, _Period, 0, Bars(_Symbol, _Period), low);
-   CopyClose(_Symbol, _Period, 0, Bars(_Symbol, _Period), close);
+    double identified_high = iHigh(_Symbol, _Period, identified_candle_index);
+    double identified_low = iLow(_Symbol, _Period, identified_candle_index);
+    double identified_range = identified_high - identified_low;
 
-   string line_name = "IdentifiedCandleLine";
-   datetime line_time = (datetime)ObjectGetInteger(0, line_name, OBJPROP_TIME);
+    double current_price = iClose(_Symbol, _Period, 0);
 
-   int identified_candle_index = -1;
-   for(int i = Bars(_Symbol, _Period) - 1; i >= 0; i--)
-     {
-      if(time[i] == line_time)
-        {
-         identified_candle_index = i;
-         break;
-        }
-     }
+    double high_ret = 0;
+    double low_ret = 0;
 
-   if(identified_candle_index < 0)
-     {
-      ObjectSetString(0, "HighRetLabel", OBJPROP_TEXT, "High ret: 0.00%");
-      ObjectSetString(0, "LowRetLabel", OBJPROP_TEXT, "Low ret: 0.00%");
-      ObjectSetInteger(0, "HighRetLine", OBJPROP_COLOR, clrNONE);
-      ObjectSetInteger(0, "LowRetLine", OBJPROP_COLOR, clrNONE);
-      return;
-     }
+    if(identified_range > 0)
+    {
+        high_ret = ((identified_high - current_price) / identified_range) * 100;
+        low_ret = ((current_price - identified_low) / identified_range) * 100;
+    }
 
-   int i = Bars(_Symbol, _Period) - 1;
+    ObjectSetString(0, "HighRetLabel", OBJPROP_TEXT, "High ret: " + DoubleToString(high_ret, 2) + "%");
+    ObjectSetString(0, "LowRetLabel", OBJPROP_TEXT, "Low ret: " + DoubleToString(low_ret, 2) + "%");
 
-   double identified_high = high[identified_candle_index];
-   double identified_low = low[identified_candle_index];
-   double identified_range = identified_high - identified_low;
-
-   double current_price = close[i];
-
-   double high_ret = 0;
-   double low_ret = 0;
-
-   if(identified_range > 0)
-     {
-      high_ret = ((identified_high - current_price) / identified_range) * 100;
-      low_ret = ((current_price - identified_low) / identified_range) * 100;
-     }
-
-   ObjectSetString(0, "HighRetLabel", OBJPROP_TEXT, "High ret: " + DoubleToString(high_ret, 2) + "%");
-   ObjectSetString(0, "LowRetLabel", OBJPROP_TEXT, "Low ret: " + DoubleToString(low_ret, 2) + "%");
-
-   DrawRetracementLines(identified_candle_index, identified_high, identified_low);
-  }
+    DrawRetracementLines(identified_candle_index, identified_high, identified_low);
+}
 
 //+------------------------------------------------------------------+
 //| ChartEvent function                                              |
@@ -157,44 +135,46 @@ void OnChartEvent(const int id,
 //| Draw Retracement Lines                                           |
 //+------------------------------------------------------------------+
 void DrawRetracementLines(int identified_candle_index, double identified_high, double identified_low)
-  {
-   string high_line_name = "HighRetLine";
-   string low_line_name = "LowRetLine";
+{
+    string high_line_name = "HighRetLine";
+    string low_line_name = "LowRetLine";
 
-   double high_level = identified_high - (identified_high - identified_low) * (InpRetracementPercentage / 100.0);
-   double low_level = identified_low + (identified_high - identified_low) * (InpRetracementPercentage / 100.0);
+    double high_level = identified_high - (identified_high - identified_low) * (InpRetracementPercentage / 100.0);
+    double low_level = identified_low + (identified_high - identified_low) * (InpRetracementPercentage / 100.0);
 
-   datetime start_time = iTime(_Symbol, _Period, identified_candle_index);
-   datetime end_time = iTime(_Symbol, _Period, 0);
+    datetime start_time = iTime(_Symbol, _Period, identified_candle_index);
+    datetime end_time = iTime(_Symbol, _Period, 0);
 
-   // High line
-   if(ObjectFind(0, high_line_name) < 0)
-     {
-      ObjectCreate(0, high_line_name, OBJ_TREND, 0, start_time, high_level, end_time, high_level);
-      ObjectSetInteger(0, high_line_name, OBJPROP_WIDTH, 1);
-      ObjectSetInteger(0, high_line_name, OBJPROP_STYLE, STYLE_DOT);
-      ObjectSetInteger(0, high_line_name, OBJPROP_RAY_RIGHT, false);
-      ObjectSetInteger(0, high_line_name, OBJPROP_SELECTABLE, false);
-     }
-   ObjectSetInteger(0, high_line_name, OBJPROP_COLOR, clrMagenta);
-   ObjectSetInteger(0, high_line_name, OBJPROP_TIME, 0, start_time);
-   ObjectSetDouble(0, high_line_name, OBJPROP_PRICE, 0, high_level);
-   ObjectSetInteger(0, high_line_name, OBJPROP_TIME, 1, end_time);
-   ObjectSetDouble(0, high_line_name, OBJPROP_PRICE, 1, high_level);
+    // High line
+    if(ObjectFind(0, high_line_name) < 0)
+    {
+        ObjectCreate(0, high_line_name, OBJ_TREND, 0, start_time, high_level, end_time, high_level);
+        ObjectSetInteger(0, high_line_name, OBJPROP_WIDTH, 1);
+        ObjectSetInteger(0, high_line_name, OBJPROP_STYLE, STYLE_DOT);
+        ObjectSetInteger(0, high_line_name, OBJPROP_RAY_RIGHT, false);
+        ObjectSetInteger(0, high_line_name, OBJPROP_SELECTABLE, false);
+    }
+    else
+    {
+        ObjectMove(0, high_line_name, 0, start_time, high_level);
+        ObjectMove(0, high_line_name, 1, end_time, high_level);
+    }
+    ObjectSetInteger(0, high_line_name, OBJPROP_COLOR, clrMagenta);
 
-   // Low line
-   if(ObjectFind(0, low_line_name) < 0)
-     {
-      ObjectCreate(0, low_line_name, OBJ_TREND, 0, start_time, low_level, end_time, low_level);
-      ObjectSetInteger(0, low_line_name, OBJPROP_WIDTH, 1);
-      ObjectSetInteger(0, low_line_name, OBJPROP_STYLE, STYLE_DOT);
-      ObjectSetInteger(0, low_line_name, OBJPROP_RAY_RIGHT, false);
-      ObjectSetInteger(0, low_line_name, OBJPROP_SELECTABLE, false);
-     }
-   ObjectSetInteger(0, low_line_name, OBJPROP_COLOR, clrAqua);
-   ObjectSetInteger(0, low_line_name, OBJPROP_TIME, 0, start_time);
-   ObjectSetDouble(0, low_line_name, OBJPROP_PRICE, 0, low_level);
-   ObjectSetInteger(0, low_line_name, OBJPROP_TIME, 1, end_time);
-   ObjectSetDouble(0, low_line_name, OBJPROP_PRICE, 1, low_level);
-  }
+    // Low line
+    if(ObjectFind(0, low_line_name) < 0)
+    {
+        ObjectCreate(0, low_line_name, OBJ_TREND, 0, start_time, low_level, end_time, low_level);
+        ObjectSetInteger(0, low_line_name, OBJPROP_WIDTH, 1);
+        ObjectSetInteger(0, low_line_name, OBJPROP_STYLE, STYLE_DOT);
+        ObjectSetInteger(0, low_line_name, OBJPROP_RAY_RIGHT, false);
+        ObjectSetInteger(0, low_line_name, OBJPROP_SELECTABLE, false);
+    }
+    else
+    {
+        ObjectMove(0, low_line_name, 0, start_time, low_level);
+        ObjectMove(0, low_line_name, 1, end_time, low_level);
+    }
+    ObjectSetInteger(0, low_line_name, OBJPROP_COLOR, clrAqua);
+}
 //+------------------------------------------------------------------+
