@@ -21,30 +21,46 @@ void OnInit()
    SetIndexBuffer(0, HighRetBuffer, INDICATOR_DATA);
    SetIndexBuffer(1, LowRetBuffer, INDICATOR_DATA);
 
+//--- clean up existing objects
+   ObjectsDeleteAll(0, 0, -1);
+
 //--- labels
    ObjectCreate(0, "HighRetLabel", OBJ_LABEL, 0, 0, 0);
    ObjectSetString(0, "HighRetLabel", OBJPROP_TEXT, "High ret:");
+   ObjectSetInteger(0,"HighRetLabel",OBJPROP_CORNER,CORNER_LEFT_LOWER);
    ObjectSetInteger(0, "HighRetLabel", OBJPROP_COLOR, clrMagenta);
-   ObjectSetInteger(0, "HighRetLabel", OBJPROP_XDISTANCE, 10);
-   ObjectSetInteger(0, "HighRetLabel", OBJPROP_YDISTANCE, 15);
+   ObjectSetInteger(0, "HighRetLabel", OBJPROP_XDISTANCE, 320);
+   ObjectSetInteger(0, "HighRetLabel", OBJPROP_YDISTANCE, 55);
 
    ObjectCreate(0, "LowRetLabel", OBJ_LABEL, 0, 0, 0);
    ObjectSetString(0, "LowRetLabel", OBJPROP_TEXT, "Low ret:");
+   ObjectSetInteger(0,"LowRetLabel",OBJPROP_CORNER,CORNER_LEFT_LOWER);
    ObjectSetInteger(0, "LowRetLabel", OBJPROP_COLOR, clrAqua);
-   ObjectSetInteger(0, "LowRetLabel", OBJPROP_XDISTANCE, 10);
-   ObjectSetInteger(0, "LowRetLabel", OBJPROP_YDISTANCE, 30);
+   ObjectSetInteger(0, "LowRetLabel", OBJPROP_XDISTANCE, 320);
+   ObjectSetInteger(0, "LowRetLabel", OBJPROP_YDISTANCE, 40);
 
-//--- create movable vertical line
+//--- create movable vertical line at the last closed candle (shift 1)
    string line_name = "IdentifiedCandleLine";
    if(ObjectFind(0, line_name) < 0)
      {
-      ObjectCreate(0, line_name, OBJ_VLINE, 0, TimeCurrent(), 0);
-      ObjectSetInteger(0, line_name, OBJPROP_COLOR, clrGray);
+      // Get time of the last closed candle (shift 1)
+      datetime last_closed_time = iTime(_Symbol, _Period, 1);
+      ObjectCreate(0, line_name, OBJ_VLINE, 0, last_closed_time, 0);
+      ObjectSetInteger(0, line_name, OBJPROP_COLOR, clrYellow);
       ObjectSetInteger(0, line_name, OBJPROP_STYLE, STYLE_DOT);
       ObjectSetInteger(0, line_name, OBJPROP_SELECTABLE, true);
       ObjectSetInteger(0, line_name, OBJPROP_SELECTED, true);
       ObjectSetInteger(0, line_name, OBJPROP_BACK, true);
      }
+  }
+
+//+------------------------------------------------------------------+
+//| Custom indicator deinitialization function                       |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+//--- clean up all objects created by the indicator
+   ObjectsDeleteAll(0, 0, -1);
   }
 
 //+------------------------------------------------------------------+
