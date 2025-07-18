@@ -21,7 +21,17 @@ void DeleteIndicatorObjects()
   {
    ObjectDelete(0, "HighRetLabel");
    ObjectDelete(0, "LowRetLabel");
-   ObjectDelete(0, "IdentifiedCandleLine");
+   ObjectDelete(0, "HighRetLine");
+   ObjectDelete(0, "LowRetLine");
+  }
+
+//+------------------------------------------------------------------+
+//| Delete Retracement Objects                                       |
+//+------------------------------------------------------------------+
+void DeleteRetracementObjects()
+  {
+   ObjectDelete(0, "HighRetLabel");
+   ObjectDelete(0, "LowRetLabel");
    ObjectDelete(0, "HighRetLine");
    ObjectDelete(0, "LowRetLine");
   }
@@ -75,6 +85,7 @@ void OnDeinit(const int reason)
   {
 //--- clean up all objects created by the indicator
    DeleteIndicatorObjects();
+   ObjectDelete(0, "IdentifiedCandleLine");
   }
 
 //+------------------------------------------------------------------+
@@ -107,7 +118,12 @@ int OnCalculate(const int rates_total,
      }
 
    if(identified_candle_index < 0)
+     {
+      DeleteRetracementObjects();
+      ObjectSetString(0, "HighRetLabel", OBJPROP_TEXT, "High ret:");
+      ObjectSetString(0, "LowRetLabel", OBJPROP_TEXT, "Low ret:");
       return(0);
+     }
 
 //---
    int i = rates_total - 1;
