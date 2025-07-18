@@ -118,9 +118,10 @@ void UpdateRetracement()
 
    if(identified_candle_index < 0)
      {
-      DeleteRetracementObjects();
-      ObjectSetString(0, "HighRetLabel", OBJPROP_TEXT, "High ret:");
-      ObjectSetString(0, "LowRetLabel", OBJPROP_TEXT, "Low ret:");
+      ObjectSetString(0, "HighRetLabel", OBJPROP_TEXT, "High ret: 0.00%");
+      ObjectSetString(0, "LowRetLabel", OBJPROP_TEXT, "Low ret: 0.00%");
+      ObjectSetInteger(0, "HighRetLine", OBJPROP_COLOR, clrNONE);
+      ObjectSetInteger(0, "LowRetLine", OBJPROP_COLOR, clrNONE);
       return;
      }
 
@@ -202,12 +203,12 @@ void DrawRetracementLines(int identified_candle_index, double identified_high, d
    if(ObjectFind(0, high_line_name) < 0)
      {
       ObjectCreate(0, high_line_name, OBJ_TREND, 0, start_time, high_level, end_time, high_level);
-      ObjectSetInteger(0, high_line_name, OBJPROP_COLOR, clrMagenta);
       ObjectSetInteger(0, high_line_name, OBJPROP_WIDTH, 1);
       ObjectSetInteger(0, high_line_name, OBJPROP_STYLE, STYLE_DOT);
       ObjectSetInteger(0, high_line_name, OBJPROP_RAY_RIGHT, false);
       ObjectSetInteger(0, high_line_name, OBJPROP_SELECTABLE, false);
      }
+   ObjectSetInteger(0, high_line_name, OBJPROP_COLOR, clrMagenta);
    ObjectSetInteger(0, high_line_name, OBJPROP_TIME, 0, start_time);
    ObjectSetDouble(0, high_line_name, OBJPROP_PRICE, 0, high_level);
    ObjectSetInteger(0, high_line_name, OBJPROP_TIME, 1, end_time);
@@ -217,12 +218,12 @@ void DrawRetracementLines(int identified_candle_index, double identified_high, d
    if(ObjectFind(0, low_line_name) < 0)
      {
       ObjectCreate(0, low_line_name, OBJ_TREND, 0, start_time, low_level, end_time, low_level);
-      ObjectSetInteger(0, low_line_name, OBJPROP_COLOR, clrAqua);
       ObjectSetInteger(0, low_line_name, OBJPROP_WIDTH, 1);
       ObjectSetInteger(0, low_line_name, OBJPROP_STYLE, STYLE_DOT);
       ObjectSetInteger(0, low_line_name, OBJPROP_RAY_RIGHT, false);
       ObjectSetInteger(0, low_line_name, OBJPROP_SELECTABLE, false);
      }
+   ObjectSetInteger(0, low_line_name, OBJPROP_COLOR, clrAqua);
    ObjectSetInteger(0, low_line_name, OBJPROP_TIME, 0, start_time);
    ObjectSetDouble(0, low_line_name, OBJPROP_PRICE, 0, low_level);
    ObjectSetInteger(0, low_line_name, OBJPROP_TIME, 1, end_time);
