@@ -89,26 +89,25 @@ void OnDeinit(const int reason)
   }
 
 //+------------------------------------------------------------------+
-//| Custom indicator iteration function                              |
+//| Update Retracement                                               |
 //+------------------------------------------------------------------+
-int OnCalculate(const int rates_total,
-                const int prev_calculated,
-                const datetime &time[],
-                const double &open[],
-                const double &high[],
-                const double &low[],
-                const double &close[],
-                const long &tick_volume[],
-                const long &volume[],
-                const int &spread[])
+void UpdateRetracement()
   {
-//--- get line time
+   datetime time[];
+   double open[], high[], low[], close[];
+   long tick_volume[], volume[];
+   int spread[];
+
+   CopyTime(_Symbol, _Period, 0, Bars(_Symbol, _Period), time);
+   CopyHigh(_Symbol, _Period, 0, Bars(_Symbol, _Period), high);
+   CopyLow(_Symbol, _Period, 0, Bars(_Symbol, _Period), low);
+   CopyClose(_Symbol, _Period, 0, Bars(_Symbol, _Period), close);
+
    string line_name = "IdentifiedCandleLine";
    datetime line_time = (datetime)ObjectGetInteger(0, line_name, OBJPROP_TIME);
 
-//--- time to bar index
    int identified_candle_index = -1;
-   for(int i = rates_total - 1; i >= 0; i--)
+   for(int i = Bars(_Symbol, _Period) - 1; i >= 0; i--)
      {
       if(time[i] == line_time)
         {
@@ -122,21 +121,17 @@ int OnCalculate(const int rates_total,
       DeleteRetracementObjects();
       ObjectSetString(0, "HighRetLabel", OBJPROP_TEXT, "High ret:");
       ObjectSetString(0, "LowRetLabel", OBJPROP_TEXT, "Low ret:");
-      return(0);
+      return;
      }
 
-//---
-   int i = rates_total - 1;
+   int i = Bars(_Symbol, _Period) - 1;
 
-//--- identified candle
    double identified_high = high[identified_candle_index];
    double identified_low = low[identified_candle_index];
    double identified_range = identified_high - identified_low;
 
-//--- current price
    double current_price = close[i];
 
-//--- calculations
    double high_ret = 0;
    double low_ret = 0;
 
@@ -146,17 +141,49 @@ int OnCalculate(const int rates_total,
       low_ret = ((current_price - identified_low) / identified_range) * 100;
      }
 
-//--- display values
    ObjectSetString(0, "HighRetLabel", OBJPROP_TEXT, "High ret: " + DoubleToString(high_ret, 2) + "%");
    ObjectSetString(0, "LowRetLabel", OBJPROP_TEXT, "Low ret: " + DoubleToString(low_ret, 2) + "%");
 
-//--- draw lines
    DrawRetracementLines(identified_candle_index, identified_high, identified_low);
+  }
 
-//---
+//+------------------------------------------------------------------+
+//| Custom indicator iteration function                              |
+//+------------------------------------------------------------------+
+int OnCalculate(const int rates_total,
+                const int prev_calculated,
+                const datetime &time[],
+                const double &open[],
+                const double &high[],
+                const double &low[],
+                const double &close[],
+                const long &tick_volume[],
+                const long &volume[],
+                const int &spread[])
+  {
+   UpdateRetracement();
    return(rates_total);
   }
 
+//+------------------------------------------------------------------+
+//| ChartEvent function                                              |
+//+------------------------------------------------------------------+
+void OnChartEvent(const int id,
+                  const long &lparam,
+                  const double &dparam,
+                  const string &sparam)
+  {
+//--- check if the event is a move of a graphical object
+   if(id == CHARTEVENT_OBJECT_DRAG)
+     {
+      //--- check if the moved object is our vertical line
+      if(sparam == "IdentifiedCandleLine")
+        {
+         //--- update the retracement lines
+         UpdateRetracement();
+        }
+     }
+  }
 //+------------------------------------------------------------------+
 //| Draw Retracement Lines                                           |
 //+------------------------------------------------------------------+
