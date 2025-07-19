@@ -34,7 +34,7 @@ int OnInit()
    ObjectCreate(0, "SignalBox", OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0,"SignalBox",OBJPROP_CORNER,CORNER_LEFT_LOWER);
    ObjectSetInteger(0,"SignalBox",OBJPROP_XDISTANCE,300);
-   ObjectSetInteger(0,"SignalBox",OBJPROP_YDISTANCE,40);
+   ObjectSetInteger(0,"SignalBox",OBJPROP_YDISTANCE,50);
    ObjectSetInteger(0,"SignalBox",OBJPROP_XSIZE,15);
    ObjectSetInteger(0,"SignalBox",OBJPROP_YSIZE,15);
    ObjectSetInteger(0,"SignalBox",OBJPROP_BGCOLOR,InpBoxColor);
