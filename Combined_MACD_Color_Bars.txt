@@ -278,6 +278,13 @@ int OnCalculate(const int rates_total,
 
       signalValueBuffer[i] = colorIndex[i];
    }
+
+   int lastBar = rates_total - 1;
+   //--- Write current signal to global variable for EA access
+   string gv_name = Symbol() + "_MACD_SIGNAL";
+
+   GlobalVariableSet(gv_name, signalValueBuffer[lastBar]);
+
    return(rates_total);
 }
 
