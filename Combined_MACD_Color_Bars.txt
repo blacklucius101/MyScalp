@@ -5,6 +5,18 @@
 //| Combines Long-MACD and Short-MACD signals to generate colored    |
 //| price bars/candles.                                              |
 //+--------------------------------------------------------------------+
+
+/*
+For Expert Advisor access:
+- Use iCustom() to access buffer 5 (signalValueBuffer)
+- Returns values from enSignalValues enum:
+  SIGNAL_GREEN   = 0 (Both MACDs bullish)
+  SIGNAL_CRIMSON = 1 (Both MACDs bearish)
+  SIGNAL_ORANGE  = 2 (Long bullish, Short bearish)
+  SIGNAL_LIME    = 3 (Long bearish, Short bullish)
+  SIGNAL_NONE    = -1 (No clear signal)
+*/
+
 #property indicator_chart_window
 #property indicator_buffers 6 // Open, High, Low, Close, ColorIndex, SignalValue
 #property indicator_plots   1
@@ -71,7 +83,7 @@ int OnInit()
    SetIndexBuffer(2, priceLow, INDICATOR_DATA);
    SetIndexBuffer(3, priceClose, INDICATOR_DATA);
    SetIndexBuffer(4, colorIndex, INDICATOR_COLOR_INDEX);
-   SetIndexBuffer(5, signalValueBuffer, INDICATOR_CALCULATIONS);
+   SetIndexBuffer(5, signalValueBuffer, INDICATOR_DATA);
    
    //--- Set drawing style based on user selection
    if(inpChartStyle == STYLE_COLOR_CANDLES)
@@ -90,8 +102,13 @@ int OnInit()
    PlotIndexSetInteger(0, PLOT_LINE_COLOR, 2, clrOrange);
    PlotIndexSetInteger(0, PLOT_LINE_COLOR, 3, clrLime);
    
+   //--- Configure signal buffer for EA access (not drawn on chart)
+   PlotIndexSetInteger(5, PLOT_DRAW_TYPE, DRAW_NONE);
+   PlotIndexSetString(5, PLOT_LABEL, "Signal Values");
+   
    //--- Set empty value
    PlotIndexSetDouble(0, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+   PlotIndexSetDouble(5, PLOT_EMPTY_VALUE, SIGNAL_NONE);
    
    //--- Set indicator name
    string short_name = StringFormat("Combined MACD Clr (%d,%d,%d | %d,%d,%d)", 
