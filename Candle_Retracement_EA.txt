@@ -10,6 +10,13 @@
 input int InpRetracementPercentage = 50; // Retracement percentage
 input color InpBoxColor = clrGray; // Box color
 
+datetime last_line_time = 0;
+int last_candle_index = -1;
+double last_high = 0.0;
+double last_low = 0.0;
+double high_ret_level = 0.0;
+double low_ret_level = 0.0;
+
 //+------------------------------------------------------------------+
 //| Delete Objects                                                   |
 //+------------------------------------------------------------------+
@@ -86,48 +93,132 @@ void OnDeinit(const int reason)
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick()
-  {
-//--- get signal from global variable
-   string gv_name = Symbol() + "_MACD_SIGNAL";
-   color box_color = InpBoxColor;
-   string signalText = "Waiting for indicator...";
+{
+    static int last_alert_signal = -99;
+    static color last_box_color = clrNONE;
+    color box_color = InpBoxColor;
+    string signalText = "Waiting for indicator...";
 
-   if(GlobalVariableCheck(gv_name))
-     {
-      double signalValue = GlobalVariableGet(gv_name);
-      int signal = (int)signalValue;
+    // Read vertical line time
+    datetime line_time = (datetime)ObjectGetInteger(0, "IdentifiedCandleLine", OBJPROP_TIME);
 
-      //--- update box color
-      switch(signal)
+    // Only recalculate retracement levels if line moved
+    if (line_time != last_line_time)
+    {
+        int index = iBarShift(_Symbol, _Period, line_time, false);
+        int total = Bars(_Symbol, _Period);
+
+        if (index < 0 || index >= total)
         {
-         case 0:
-            box_color = clrGreen;
-            signalText = "GREEN";
-            break;
-         case 1:
-            box_color = clrCrimson;
-            signalText = "CRIMSON";
-            break;
-         case 2:
-            signalText = "ORANGE";
-            break;
-         case 3:
-            signalText = "LIME";
-            break;
-         case -1:
-            signalText = "NONE";
-            break;
-         default:
-            signalText = "INVALID";
-            break;
+            // Invalid line position
+            last_candle_index = -1;
+            high_ret_level = 0;
+            low_ret_level = 0;
+            ObjectSetInteger(0, "SignalBox", OBJPROP_BGCOLOR, InpBoxColor);
+            Comment("Invalid vertical line position.");
+            UpdateRetracement(); // still update UI
+            return;
         }
-     }
 
-   ObjectSetInteger(0, "SignalBox", OBJPROP_BGCOLOR, box_color);
-   Comment("MACD Signal: ", signalText);
+        // Cache values
+        last_candle_index = index;
+        last_high = iHigh(_Symbol, _Period, index);
+        last_low = iLow(_Symbol, _Period, index);
+        double range = last_high - last_low;
 
-   UpdateRetracement();
-  }
+        if (range > 0)
+        {
+            high_ret_level = last_high - range * (InpRetracementPercentage / 100.0);
+            low_ret_level = last_low + range * (InpRetracementPercentage / 100.0);
+        }
+
+        last_line_time = line_time;
+
+        UpdateRetracement(); // update visual retracement lines
+    }
+
+    // Don't proceed if retracement levels are invalid
+    if (last_candle_index < 0 || high_ret_level == 0 || low_ret_level == 0)
+    {
+        ObjectSetInteger(0, "SignalBox", OBJPROP_BGCOLOR, InpBoxColor);
+        Comment("Retracement levels not ready.");
+        return;
+    }
+
+    // Evaluate signal condition
+    string gv_name = Symbol() + "_MACD_SIGNAL";
+    double current_price = iClose(_Symbol, _Period, 0);
+
+    if (GlobalVariableCheck(gv_name))
+    {
+        int signal = (int)GlobalVariableGet(gv_name);
+
+        switch(signal)
+        {
+            case 0: // GREEN
+                if (current_price > low_ret_level)
+                {
+                    box_color = clrGreen;
+                    signalText = "GREEN (Valid)";
+                    if (last_alert_signal != 0) // Only alert on new valid signal
+                    {
+                        PlaySound("alert.wav"); // You can also use "tick.wav" or your custom .wav file
+                        last_alert_signal = 0;
+                    }
+                }
+                else
+                {
+                    signalText = "GREEN (Invalid)";
+                    last_alert_signal = -99; // Reset if invalid again
+                }
+                break;
+
+            case 1: // CRIMSON
+                if (current_price < high_ret_level)
+                {
+                    box_color = clrCrimson;
+                    signalText = "CRIMSON (Valid)";
+                    if (last_alert_signal != 1)
+                    {
+                        PlaySound("alert.wav");
+                        last_alert_signal = 1;
+                    }
+                }
+                else
+                {
+                    signalText = "CRIMSON (Invalid)";
+                    last_alert_signal = -99;
+                }
+                break;
+
+            case 2:
+                signalText = "ORANGE";
+                break;
+
+            case 3:
+                signalText = "LIME";
+                break;
+
+            case -1:
+                signalText = "NONE";
+                break;
+
+            default:
+                signalText = "INVALID";
+                break;
+        }
+    }
+
+    // Only update the box if color changed
+    if (box_color != last_box_color)
+    {
+        ObjectSetInteger(0, "SignalBox", OBJPROP_BGCOLOR, box_color);
+        last_box_color = box_color;
+    }
+
+    Comment("MACD Signal: ", signalText);
+}
+
 //+------------------------------------------------------------------+
 //| Update Retracement                                               |
 //+------------------------------------------------------------------+
