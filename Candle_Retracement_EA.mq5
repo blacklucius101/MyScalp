@@ -3,12 +3,26 @@
 //|                        Copyright 2023, MetaQuotes Software Corp. |
 //|                                             https://www.mql5.com |
 //+------------------------------------------------------------------+
+#include <Trade\Trade.mqh>
+
 #property copyright "Copyright 2023, MetaQuotes Software Corp."
 #property link      "https://www.mql5.com"
 #property version   "1.00"
 
-input int InpRetracementPercentage = 50; // Retracement percentage
+input int InpRetracementPercentage = 72; // Retracement percentage
 input color InpBoxColor = clrGray; // Box color
+//--- Input parameters for trade levels
+input group "Trade Levels (in Points)"
+input int InpTakeProfit = 5000;       // Take Profit in points
+input int InpStopLoss = 70000;         // Stop Loss in points
+input int InpTrailingStop = 0;       // Trailing Stop in points (0 = disabled)
+input int InpTrailingStep = 1;        // Trailing Step in points
+input int InpStartTrailingPoint = 5001; // Start Trailing Point in points
+
+//--- Input parameter for lot size
+input group "Lot Size Management"
+input double InpLotSize = 0.0;        // Lot size (0.0 = dynamic calculation)
+
 
 datetime last_line_time = 0;
 int last_candle_index = -1;
@@ -16,6 +30,18 @@ double last_high = 0.0;
 double last_low = 0.0;
 double high_ret_level = 0.0;
 double low_ret_level = 0.0;
+
+//--- pending trade status
+enum ENUM_PENDING_TRADE
+  {
+   PENDING_NONE,
+   PENDING_BUY,
+   PENDING_SELL
+  };
+
+ENUM_PENDING_TRADE pending_trade = PENDING_NONE;
+
+CTrade trade;
 
 //+------------------------------------------------------------------+
 //| Delete Objects                                                   |
@@ -27,6 +53,40 @@ void DeleteIndicatorObjects()
    ObjectDelete(0, "HighRetLine");
    ObjectDelete(0, "LowRetLine");
    ObjectDelete(0, "SignalBox");
+   ObjectDelete(0, "BuyButton");
+   ObjectDelete(0, "SellButton");
+   ObjectDelete(0, "PendingStatusBox");
+   ObjectDelete(0, "TakeProfitBuy");
+   ObjectDelete(0, "TakeProfitSell");
+  }
+
+//+------------------------------------------------------------------+
+//| Create Button Object                                             |
+//+------------------------------------------------------------------+
+void CreateButton(string name, string text, int x, int y, int width, int height, color bgColor, color textColor, int corner = 0, int fontSize = 8)
+  {
+   if(ObjectFind(0, name) != 0)
+     {
+      if(!ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0))
+        {
+         Print("Error creating button ", name, ": ", GetLastError());
+         return;
+        }
+     }
+
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, height);
+   ObjectSetInteger(0, name, OBJPROP_CORNER, corner);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bgColor);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, textColor);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, fontSize);
+   ObjectSetInteger(0, name, OBJPROP_STATE, 0);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, 0);
+   ObjectSetInteger(0, name, OBJPROP_BACK, 0);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 0);
   }
 
 //+------------------------------------------------------------------+
@@ -46,6 +106,21 @@ int OnInit()
    ObjectSetInteger(0,"SignalBox",OBJPROP_YSIZE,15);
    ObjectSetInteger(0,"SignalBox",OBJPROP_BGCOLOR,InpBoxColor);
    ObjectSetInteger(0,"SignalBox",OBJPROP_BACK,false);
+
+//--- pending status box
+   ObjectCreate(0, "PendingStatusBox", OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0,"PendingStatusBox",OBJPROP_CORNER,CORNER_LEFT_LOWER);
+   ObjectSetInteger(0,"PendingStatusBox",OBJPROP_XDISTANCE,280);
+   ObjectSetInteger(0,"PendingStatusBox",OBJPROP_YDISTANCE,50);
+   ObjectSetInteger(0,"PendingStatusBox",OBJPROP_XSIZE,15);
+   ObjectSetInteger(0,"PendingStatusBox",OBJPROP_YSIZE,15);
+   ObjectSetInteger(0,"PendingStatusBox",OBJPROP_BGCOLOR,clrLightGray);
+   ObjectSetInteger(0,"PendingStatusBox",OBJPROP_BACK,false);
+
+//--- buttons
+   CreateButton("BuyButton", "BUY", 200, 50, 70, 25, clrGreen, clrWhite, CORNER_LEFT_LOWER);
+   CreateButton("SellButton", "SELL", 120, 50, 70, 25, clrRed, clrWhite, CORNER_LEFT_LOWER);
+
 
 //--- labels
    ObjectCreate(0, "HighRetLabel", OBJ_LABEL, 0, 0, 0);
@@ -90,10 +165,95 @@ void OnDeinit(const int reason)
    Comment("");
   }
 //+------------------------------------------------------------------+
+//| Trailing Stop Logic                                              |
+//+------------------------------------------------------------------+
+void TrailingStopModifyOrders()
+  {
+   if(InpTrailingStop <= 0) 
+      return;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--) 
+     {
+      if(PositionGetSymbol(i) == _Symbol) 
+        {
+         long positionTicket = PositionGetInteger(POSITION_TICKET);
+         ENUM_POSITION_TYPE positionType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+         double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+         double currentSl = PositionGetDouble(POSITION_SL);
+         double currentTp = PositionGetDouble(POSITION_TP); 
+         double currentPrice = 0;
+
+         if(positionType == POSITION_TYPE_BUY)
+           {
+            currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+            if(currentPrice == 0) 
+              {
+               continue; 
+              }
+
+            if(currentPrice >= openPrice + InpStartTrailingPoint * _Point)
+              {
+               double proposed_sl = currentPrice - InpTrailingStop * _Point;
+
+               if(proposed_sl > openPrice &&
+                  (currentSl == 0 || proposed_sl > currentSl) &&
+                  (currentSl == 0 || (proposed_sl - currentSl) >= InpTrailingStep * _Point || InpTrailingStep == 0) ) 
+                 {
+                  if(trade.PositionModify(positionTicket, proposed_sl, currentTp))
+                    {
+                     Print("Trailing stop updated for BUY #", positionTicket, " to ", DoubleToString(proposed_sl, _Digits));
+                    }
+                  else
+                    {
+                     Print("Error modifying trailing stop for BUY position #", positionTicket, ": ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
+                    }
+                 }
+              }
+           }
+         else if(positionType == POSITION_TYPE_SELL)
+           {
+            currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK); 
+            if(currentPrice == 0) 
+              { 
+               Print("TrailingStopModifyOrders: Could not get ASK price for SELL position #", positionTicket); 
+               continue; 
+              }
+
+            if(currentPrice <= openPrice - InpStartTrailingPoint * _Point)
+              {
+               double proposed_sl = currentPrice + InpTrailingStop * _Point;
+
+               if(proposed_sl < openPrice && 
+                  (currentSl == 0 || proposed_sl < currentSl) && 
+                  (currentSl == 0 || (currentSl - proposed_sl) >= InpTrailingStep * _Point || InpTrailingStep == 0) ) 
+                 {
+                  if(trade.PositionModify(positionTicket, proposed_sl, currentTp))
+                    {
+                     Print("Trailing stop updated for SELL position #", positionTicket, " to ", DoubleToString(proposed_sl, _Digits));
+                    }
+                  else
+                    {
+                     Print("Error modifying trailing stop for SELL position #", positionTicket, ": ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
+                    }
+                 }
+              }
+           }
+        }
+     }
+  }
+
+//+------------------------------------------------------------------+
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick()
 {
+    TrailingStopModifyOrders();
+
+    // Draw Take Profit Lines
+    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    DrawTakeProfitLines(ask, bid);
+
     static int last_alert_signal = -99;
     static color last_box_color = clrNONE;
     color box_color = InpBoxColor;
@@ -274,6 +434,104 @@ void UpdateRetracement()
 }
 
 //+------------------------------------------------------------------+
+//| Calculate Lot Size                                               |
+//+------------------------------------------------------------------+
+double CalculateLotSize()
+  {
+   if(InpLotSize > 0.0)
+     {
+      double userLotSize = InpLotSize;
+      double volumeMin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+      double volumeMax = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+      double volumeStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+
+      if(userLotSize < volumeMin) userLotSize = volumeMin;
+      if(userLotSize > volumeMax) userLotSize = volumeMax;
+      
+      userLotSize = MathFloor(userLotSize / volumeStep) * volumeStep;
+      if (userLotSize < volumeMin) userLotSize = volumeMin; 
+
+      return(NormalizeDouble(userLotSize, 2)); 
+     }
+
+   double calculatedLotSize = AccountInfoDouble(ACCOUNT_BALANCE) / 1000.0;
+
+   double volumeMin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double volumeMax = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double volumeStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+
+   if(calculatedLotSize < volumeMin)
+     {
+      calculatedLotSize = volumeMin;
+     }
+   else if(calculatedLotSize > volumeMax)
+     {
+      calculatedLotSize = volumeMax;
+     }
+   else
+     {
+      calculatedLotSize = MathRound(calculatedLotSize / volumeStep) * volumeStep;
+      if(calculatedLotSize < volumeMin) calculatedLotSize = volumeMin;
+      if(calculatedLotSize > volumeMax) calculatedLotSize = volumeMax;
+     }
+   
+   return(NormalizeDouble(calculatedLotSize, 2));
+  }
+
+//+------------------------------------------------------------------+
+//| Execute Trade Operation                                          |
+//+------------------------------------------------------------------+
+void ExecuteTrade(ENUM_ORDER_TYPE orderType)
+  {
+   double lot = CalculateLotSize();
+   if(lot <= 0)
+     {
+      Print("ExecuteTrade: Invalid lot size calculated: ", lot);
+      return;
+     }
+   double currentPrice = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double slPrice = 0.0;
+   double tpPrice = 0.0;
+   if(orderType == ORDER_TYPE_BUY)
+     {
+      slPrice = (InpStopLoss > 0) ? currentPrice - InpStopLoss * _Point : 0.0;
+      tpPrice = (InpTakeProfit > 0) ? currentPrice + InpTakeProfit * _Point : 0.0;
+      trade.Buy(lot, _Symbol, currentPrice, slPrice, tpPrice);
+     }
+   else if(orderType == ORDER_TYPE_SELL)
+     {
+      slPrice = (InpStopLoss > 0) ? currentPrice + InpStopLoss * _Point : 0.0;
+      tpPrice = (InpTakeProfit > 0) ? currentPrice - InpTakeProfit * _Point : 0.0;
+      trade.Sell(lot, _Symbol, currentPrice, slPrice, tpPrice);
+     }
+   pending_trade = PENDING_NONE;
+   ObjectSetInteger(0, "PendingStatusBox", OBJPROP_BGCOLOR, clrLightGray);
+  }
+
+//+------------------------------------------------------------------+
+//| Check if signal is valid                                         |
+//+------------------------------------------------------------------+
+bool IsSignalValid(ENUM_ORDER_TYPE orderType)
+  {
+   string gv_name = Symbol() + "_MACD_SIGNAL";
+   if(GlobalVariableCheck(gv_name))
+     {
+      int signal = (int)GlobalVariableGet(gv_name);
+      double current_price = iClose(_Symbol, _Period, 0);
+
+      if(orderType == ORDER_TYPE_BUY && signal == 0 && current_price > low_ret_level)
+        {
+         return true;
+        }
+      if(orderType == ORDER_TYPE_SELL && signal == 1 && current_price < high_ret_level)
+        {
+         return true;
+        }
+     }
+   return false;
+  }
+
+//+------------------------------------------------------------------+
 //| ChartEvent function                                              |
 //+------------------------------------------------------------------+
 void OnChartEvent(const int id,
@@ -289,6 +547,50 @@ void OnChartEvent(const int id,
         {
          //--- update the retracement lines
          UpdateRetracement();
+        }
+     }
+//--- check if the event is a click on a graphical object
+   if(id == CHARTEVENT_OBJECT_CLICK)
+     {
+      if(sparam == "BuyButton")
+        {
+         if(pending_trade == PENDING_BUY)
+           {
+            pending_trade = PENDING_NONE;
+            ObjectSetInteger(0, "PendingStatusBox", OBJPROP_BGCOLOR, clrLightGray);
+           }
+         else
+           {
+            if(IsSignalValid(ORDER_TYPE_BUY))
+              {
+               ExecuteTrade(ORDER_TYPE_BUY);
+              }
+            else
+              {
+               pending_trade = PENDING_BUY;
+               ObjectSetInteger(0, "PendingStatusBox", OBJPROP_BGCOLOR, clrGreen);
+              }
+           }
+        }
+      if(sparam == "SellButton")
+        {
+         if(pending_trade == PENDING_SELL)
+           {
+            pending_trade = PENDING_NONE;
+            ObjectSetInteger(0, "PendingStatusBox", OBJPROP_BGCOLOR, clrLightGray);
+           }
+         else
+           {
+            if(IsSignalValid(ORDER_TYPE_SELL))
+              {
+               ExecuteTrade(ORDER_TYPE_SELL);
+              }
+            else
+              {
+               pending_trade = PENDING_SELL;
+               ObjectSetInteger(0, "PendingStatusBox", OBJPROP_BGCOLOR, clrCrimson);
+              }
+           }
         }
      }
   }
@@ -337,5 +639,93 @@ void DrawRetracementLines(int identified_candle_index, double identified_high, d
         ObjectMove(0, low_line_name, 1, end_time, low_level);
     }
     ObjectSetInteger(0, low_line_name, OBJPROP_COLOR, clrAqua);
+}
+//+------------------------------------------------------------------+
+//| Draw Take Profit Lines                                           |
+//+------------------------------------------------------------------+
+void DrawTakeProfitLines(double ask, double bid)
+{
+    if (InpTakeProfit <= 0)
+    {
+        ObjectDelete(0, "TakeProfitBuy");
+        ObjectDelete(0, "TakeProfitSell");
+        ObjectDelete(0, "AskLine");
+        return;
+    }
+
+    // Calculate Take Profit levels
+    double tp_buy_level = ask + InpTakeProfit * _Point;
+    double tp_sell_level = bid - InpTakeProfit * _Point;
+
+    // Line names
+    string buy_line_name = "TakeProfitBuy";
+    string sell_line_name = "TakeProfitSell";
+    string ask_line_name = "AskLine";
+
+    // Get start time at current bar (shift 0)
+    datetime start_time = iTime(_Symbol, _Period, 0);
+
+    // TP lines: Get end time 3 bars ahead
+    int bars_total = Bars(_Symbol, _Period);
+    datetime end_time_tp;
+    if (bars_total >= 4)
+        end_time_tp = iTime(_Symbol, _Period, 0) + (iTime(_Symbol, _Period, 0) - iTime(_Symbol, _Period, 1)) * 3;
+    else
+        end_time_tp = TimeCurrent() + 3 * PeriodSeconds();  // fallback
+
+    // Ask line: Shorter span (e.g., 1 bar ahead)
+    datetime end_time_ask;
+    if (bars_total >= 2)
+        end_time_ask = iTime(_Symbol, _Period, 0) + (iTime(_Symbol, _Period, 0) - iTime(_Symbol, _Period, 1));
+    else
+        end_time_ask = TimeCurrent() + PeriodSeconds();  // fallback
+
+    // Draw Buy TP Line
+    if (ObjectFind(0, buy_line_name) < 0)
+    {
+        ObjectCreate(0, buy_line_name, OBJ_TREND, 0, start_time, tp_buy_level, end_time_tp, tp_buy_level);
+        ObjectSetInteger(0, buy_line_name, OBJPROP_WIDTH, 1);
+        ObjectSetInteger(0, buy_line_name, OBJPROP_STYLE, STYLE_DOT);
+        ObjectSetInteger(0, buy_line_name, OBJPROP_RAY_RIGHT, false);
+        ObjectSetInteger(0, buy_line_name, OBJPROP_SELECTABLE, false);
+    }
+    else
+    {
+        ObjectMove(0, buy_line_name, 0, start_time, tp_buy_level);
+        ObjectMove(0, buy_line_name, 1, end_time_tp, tp_buy_level);
+    }
+    ObjectSetInteger(0, buy_line_name, OBJPROP_COLOR, clrGreen);
+
+    // Draw Sell TP Line
+    if (ObjectFind(0, sell_line_name) < 0)
+    {
+        ObjectCreate(0, sell_line_name, OBJ_TREND, 0, start_time, tp_sell_level, end_time_tp, tp_sell_level);
+        ObjectSetInteger(0, sell_line_name, OBJPROP_WIDTH, 1);
+        ObjectSetInteger(0, sell_line_name, OBJPROP_STYLE, STYLE_DOT);
+        ObjectSetInteger(0, sell_line_name, OBJPROP_RAY_RIGHT, false);
+        ObjectSetInteger(0, sell_line_name, OBJPROP_SELECTABLE, false);
+    }
+    else
+    {
+        ObjectMove(0, sell_line_name, 0, start_time, tp_sell_level);
+        ObjectMove(0, sell_line_name, 1, end_time_tp, tp_sell_level);
+    }
+    ObjectSetInteger(0, sell_line_name, OBJPROP_COLOR, clrRed);
+
+    // Draw Ask Line (shorter length)
+    if (ObjectFind(0, ask_line_name) < 0)
+    {
+        ObjectCreate(0, ask_line_name, OBJ_TREND, 0, start_time, ask, end_time_ask, ask);
+        ObjectSetInteger(0, ask_line_name, OBJPROP_WIDTH, 1);
+        ObjectSetInteger(0, ask_line_name, OBJPROP_STYLE, STYLE_SOLID);
+        ObjectSetInteger(0, ask_line_name, OBJPROP_RAY_RIGHT, false);
+        ObjectSetInteger(0, ask_line_name, OBJPROP_SELECTABLE, false);
+    }
+    else
+    {
+        ObjectMove(0, ask_line_name, 0, start_time, ask);
+        ObjectMove(0, ask_line_name, 1, end_time_ask, ask);
+    }
+    ObjectSetInteger(0, ask_line_name, OBJPROP_COLOR, clrBlue);
 }
 //+------------------------------------------------------------------+
