@@ -21,7 +21,7 @@
 #property indicator_label2  "Bands upper"
 #property indicator_label3  "Bands lower"
 //--- input parametrs
-input int     InpBandsPeriod=10;       // Period
+input int     InpBandsPeriod=20;       // Period
 input int     InpBandsShift=0;         // Shift
 input double  InpBandsDeviations=2.0;  // Deviation
 //--- labels
