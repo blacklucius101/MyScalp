@@ -160,6 +160,7 @@ void OnDeinit(const int reason)
    //--- clean up all objects created by the indicator
    DeleteIndicatorObjects();
    ObjectDelete(0, "IdentifiedCandleLine");
+   ObjectDelete(0, "AskLine");
    
    //--- clear comment
    Comment("");
