@@ -4,8 +4,8 @@
 #property description "RSI bands"
 //+------------------------------------------------------------------
 #property indicator_chart_window
-#property indicator_buffers 4
-#property indicator_plots   4
+#property indicator_buffers 5
+#property indicator_plots   5
 #property indicator_label1  "Dampening overbought"
 #property indicator_type1   DRAW_LINE
 #property indicator_color1  clrLimeGreen
@@ -20,6 +20,10 @@
 #property indicator_label4  "Oversold"
 #property indicator_type4   DRAW_LINE
 #property indicator_color4  clrOrangeRed
+#property indicator_label5  "Mid band (RSI 50)"
+#property indicator_type5   DRAW_LINE
+#property indicator_color5  clrGold
+#property indicator_style5  STYLE_DOT
 //--- input parameters
 input int                inpRsiPeriod   = 14;          // RSI period
 input double             inpDampening   = 0.5;         // Dampening
@@ -27,7 +31,7 @@ input ENUM_APPLIED_PRICE inpPrice       = PRICE_CLOSE; // Price
 input double             inpOverbought  = 70;          // Overbought level
 input double             inpOversold    = 30;          // Oversold level
 //--- buffers declarations
-double valud[],valdd[],valu[],vald[];
+double valud[],valdd[],valu[],vald[],valmid[];
 //+------------------------------------------------------------------+
 //| Custom indicator initialization function                         |
 //+------------------------------------------------------------------+
@@ -38,6 +42,7 @@ int OnInit()
    SetIndexBuffer(1,valdd,INDICATOR_DATA);
    SetIndexBuffer(2,valu,INDICATOR_DATA);
    SetIndexBuffer(3,vald,INDICATOR_DATA);
+   SetIndexBuffer(4,valmid,INDICATOR_DATA);
 //---
    IndicatorSetString(INDICATOR_SHORTNAME,"RSI bands("+(string)inpRsiPeriod+")");
 //---
@@ -69,13 +74,14 @@ int OnCalculate(const int rates_total,const int prev_calculated,const datetime &
       vald[i]  = rsiBand(price,inpRsiPeriod,inpOversold  ,i,0,rates_total,1);
       valud[i] = (inpDampening!=0) ? rsiBand(price,inpRsiPeriod,inpOverbought,i,inpDampening,rates_total,2) : EMPTY_VALUE;
       valdd[i] = (inpDampening!=0) ? rsiBand(price,inpRsiPeriod,inpOversold  ,i,inpDampening,rates_total,3) : EMPTY_VALUE;
+      valmid[i] = rsiBand(price,inpRsiPeriod,50,i,0,rates_total,4);
      }
    return (i);
   }
 //+------------------------------------------------------------------+
 //| custom functions                                                 |
 //+------------------------------------------------------------------+
-#define _rsiBandInstances 4
+#define _rsiBandInstances 5
 #define _rsiBandInstanceSize 4
 double rsiBandWork[][_rsiBandInstances*_rsiBandInstanceSize];
 #define _rsibPrice 0
