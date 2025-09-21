@@ -11,7 +11,7 @@
 //--- input parameters
 input datetime      input_date   = 0;          // Select a date (0 = current day)
 input color         line_color   = clrDodgerBlue; // Line color
-input ENUM_LINE_STYLE line_style = STYLE_DASH;   // Line style
+input ENUM_LINE_STYLE line_style = STYLE_DOT;   // Line style
 
 //+------------------------------------------------------------------+
 //| Custom indicator initialization function                         |
