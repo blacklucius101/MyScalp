@@ -1,12 +1,28 @@
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
 
-input group "=== TRADING ==="
-input int      TakeProfit = 50;
-input int      StopLoss = 50;
-input int      TP_Step = 1;
-input int      SL_Step = 1;
-input int      Slippage = 3;
+// --- TP/SL UI ---
+enum SLTP_MODE {
+    MODE_POINTS,
+    MODE_CURRENCY
+};
+
+input group "=== TRADING (Points) ==="
+input int      TakeProfit_Points = 3000;
+input int      StopLoss_Points = 5000;
+input int      TP_Step_Points = 100;
+input int      SL_Step_Points = 100;
+
+input group "=== TRADING (Currency) ==="
+input double   TakeProfit_Currency = 20.00;
+input double   StopLoss_Currency = 30.00;
+input double   TP_Step_Currency = 1.00;
+input double   SL_Step_Currency = 1.00;
+
+input group "=== TRADING (Common) ==="
+input SLTP_MODE  Default_TP_Mode = MODE_POINTS;
+input SLTP_MODE  Default_SL_Mode = MODE_POINTS;
+input int        Slippage = 1000;
 
 input group "=== DASHBOARD ==="
 input double UIScale = 1.0;  // User adjustable scale factor
@@ -27,12 +43,6 @@ input string   ExitKey = "x";
 
 input group "=== RISK ==="
 input int      MaxPositions = 1;
-
-// --- TP/SL UI ---
-enum SLTP_MODE {
-    MODE_POINTS,
-    MODE_CURRENCY
-};
 
 SLTP_MODE tpMode = MODE_POINTS;
 SLTP_MODE slMode = MODE_POINTS;
@@ -92,8 +102,20 @@ int OnInit()
     dailyPL = GetDailyPL();
     
     // --- TP/SL UI Init ---
-    currentTakeProfit = TakeProfit;
-    currentStopLoss = StopLoss;
+    tpMode = Default_TP_Mode;
+    slMode = Default_SL_Mode;
+
+    if (tpMode == MODE_POINTS) {
+        currentTakeProfit = TakeProfit_Points;
+    } else {
+        currentTakeProfit = TakeProfit_Currency;
+    }
+
+    if (slMode == MODE_POINTS) {
+        currentStopLoss = StopLoss_Points;
+    } else {
+        currentStopLoss = StopLoss_Currency;
+    }
     
     tpDownBtn = prefix + "TP_DOWN";
     tpUpBtn = prefix + "TP_UP";
@@ -108,8 +130,10 @@ int OnInit()
     Print("=== DASHBOARD INITIALIZATION ===");
     Print("Symbol: ", _Symbol);
     Print("Lot Size: ", GetLotSize());
-    Print("Take Profit: ", TakeProfit);
-    Print("Stop Loss: ", StopLoss);
+    Print("Take Profit (Points): ", TakeProfit_Points);
+    Print("Stop Loss (Points): ", StopLoss_Points);
+    Print("Take Profit (Currency): ", TakeProfit_Currency);
+    Print("Stop Loss (Currency): ", StopLoss_Currency);
     Print("Magic Number: ", 888888);
     Print("Trading allowed: ", CanTrade() ? "YES" : "NO");
     
@@ -185,12 +209,46 @@ void OnChartEvent(const int id, const long& lparam, const double& dparam, const 
             ObjectSetInteger(0, closeBtn, OBJPROP_STATE, false);
         }
         // --- TP/SL UI Events ---
-        else if(sparam == tpUpBtn) { currentTakeProfit += TP_Step; UpdateTPDisplay(); }
-        else if(sparam == tpDownBtn) { currentTakeProfit = MathMax(0, currentTakeProfit - TP_Step); UpdateTPDisplay(); }
-        else if(sparam == tpModeBtn) { tpMode = (tpMode == MODE_POINTS) ? MODE_CURRENCY : MODE_POINTS; UpdateTPDisplay(); }
-        else if(sparam == slUpBtn) { currentStopLoss += SL_Step; UpdateSLDisplay(); }
-        else if(sparam == slDownBtn) { currentStopLoss = MathMax(0, currentStopLoss - SL_Step); UpdateSLDisplay(); }
-        else if(sparam == slModeBtn) { slMode = (slMode == MODE_POINTS) ? MODE_CURRENCY : MODE_POINTS; UpdateSLDisplay(); }
+        else if(sparam == tpUpBtn) {
+            double step = (tpMode == MODE_POINTS) ? TP_Step_Points : TP_Step_Currency;
+            currentTakeProfit += step;
+            UpdateTPDisplay();
+        }
+        else if(sparam == tpDownBtn) {
+            double step = (tpMode == MODE_POINTS) ? TP_Step_Points : TP_Step_Currency;
+            currentTakeProfit = MathMax(0, currentTakeProfit - step);
+            UpdateTPDisplay();
+        }
+        else if(sparam == tpModeBtn) {
+            if (tpMode == MODE_POINTS) {
+                tpMode = MODE_CURRENCY;
+                currentTakeProfit = TakeProfit_Currency;
+            } else {
+                tpMode = MODE_POINTS;
+                currentTakeProfit = TakeProfit_Points;
+            }
+            UpdateTPDisplay();
+        }
+        else if(sparam == slUpBtn) {
+            double step = (slMode == MODE_POINTS) ? SL_Step_Points : SL_Step_Currency;
+            currentStopLoss += step;
+            UpdateSLDisplay();
+        }
+        else if(sparam == slDownBtn) {
+            double step = (slMode == MODE_POINTS) ? SL_Step_Points : SL_Step_Currency;
+            currentStopLoss = MathMax(0, currentStopLoss - step);
+            UpdateSLDisplay();
+        }
+        else if(sparam == slModeBtn) {
+            if (slMode == MODE_POINTS) {
+                slMode = MODE_CURRENCY;
+                currentStopLoss = StopLoss_Currency;
+            } else {
+                slMode = MODE_POINTS;
+                currentStopLoss = StopLoss_Points;
+            }
+            UpdateSLDisplay();
+        }
         // --- END TP/SL UI Events ---
         else if(sparam == minimizeBtn)
         {
@@ -364,7 +422,7 @@ void CreateFuturisticDashboard()
     if(EnableHotkeys)
     {
         CreateHotkeyPanel(prefix + "HOTKEY_PANEL", x + SX(5), statsY + SY(105), panelW - SX(10), SY(25));
-        string hotkeys = "HOTKEYS: ["+BuyKey+"] BUY ["+SellKey+"] SELL ["+CloseKey+"] CLOSE ["+MinimizeKey+"] MINIMIZE ["+ExitKey+"] EXIT";
+        string hotkeys = "["+BuyKey+"] BUY ["+SellKey+"] SELL ["+CloseKey+"] CLOSE ["+MinimizeKey+"] MIN/MAX ["+ExitKey+"] EXIT";
         CreateHotkeyLabel(prefix + "HOTKEYS", x + SX(15), statsY + SY(110), hotkeys, C'176,196,222');
     }
     
