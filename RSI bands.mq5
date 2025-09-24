@@ -3,33 +3,39 @@
 #property link        "mladenfx@gmail.com"
 #property description "RSI bands"
 //+------------------------------------------------------------------
-#property indicator_buffers 5
-#property indicator_plots   5
+#property indicator_buffers 6
+#property indicator_plots   6
 
 #property indicator_label1  "Level 1"
 #property indicator_type1   DRAW_LINE
-#property indicator_color1  clrDarkGreen
+#property indicator_color1  clrLimeGreen
 #property indicator_style1  STYLE_SOLID  // Solid
 
 #property indicator_label2  "Level 2"
 #property indicator_type2   DRAW_LINE
-#property indicator_color2  clrDarkGreen
+#property indicator_color2  clrLimeGreen
 #property indicator_style2  STYLE_DOT    // Dotted
 
-#property indicator_label3  "Level 3"
+#property indicator_label3  "Level 3 (Bull)"
 #property indicator_type3   DRAW_LINE
 #property indicator_color3  clrAqua
-#property indicator_style3  STYLE_DOT    // Dotted
+#property indicator_style3  STYLE_SOLID
+
+#property indicator_label6  "Level 3 (Bear)"
+#property indicator_type6   DRAW_LINE
+#property indicator_color6  clrMagenta
+#property indicator_style6  STYLE_SOLID
 
 #property indicator_label4  "Level 4"
 #property indicator_type4   DRAW_LINE
-#property indicator_color4  clrMaroon
+#property indicator_color4  clrOrangeRed
 #property indicator_style4  STYLE_DOT    // Dotted
 
 #property indicator_label5  "Level 5"
 #property indicator_type5   DRAW_LINE
-#property indicator_color5  clrMaroon
+#property indicator_color5  clrOrangeRed
 #property indicator_style5  STYLE_SOLID  // Solid
+
 //--- input parameters
 input int                inpRsiPeriod   = 14;          // RSI period
 input ENUM_APPLIED_PRICE inpPrice       = PRICE_CLOSE; // Price
@@ -39,7 +45,7 @@ input double inpLevel3 = 50;   // Mid (dotted)
 input double inpLevel4 = 40;   // Dotted
 input double inpLevel5 = 30;   // Bottom (solid)
 //--- buffers declarations
-double val1[], val2[], val3[], val4[], val5[];
+double val1[], val2[], val3[], val4[], val5[], val6[];
 //+------------------------------------------------------------------+
 //| Custom indicator initialization function                         |
 //+------------------------------------------------------------------+
@@ -48,9 +54,10 @@ int OnInit()
 //--- indicator buffers mapping
    SetIndexBuffer(0, val1, INDICATOR_DATA); // Level 1
    SetIndexBuffer(1, val2, INDICATOR_DATA); // Level 2
-   SetIndexBuffer(2, val3, INDICATOR_DATA); // Level 3
+   SetIndexBuffer(2, val3, INDICATOR_DATA); // Level 3 (Bull)
    SetIndexBuffer(3, val4, INDICATOR_DATA); // Level 4
    SetIndexBuffer(4, val5, INDICATOR_DATA); // Level 5
+   SetIndexBuffer(5, val6, INDICATOR_DATA); // Level 3 (Bear)
 //---
    IndicatorSetString(INDICATOR_SHORTNAME,"RSI bands("+(string)inpRsiPeriod+")");
 //---
@@ -81,9 +88,30 @@ int OnCalculate(const int rates_total,const int prev_calculated,const datetime &
       double price = getPrice(inpPrice, open, close, high, low, i, rates_total);
       val1[i] = rsiBand(price, inpRsiPeriod, inpLevel1, i, rates_total, 0); // Solid
       val2[i] = rsiBand(price, inpRsiPeriod, inpLevel2, i, rates_total, 1); // Dot
-      val3[i] = rsiBand(price, inpRsiPeriod, inpLevel3, i, rates_total, 2); // Dot
       val4[i] = rsiBand(price, inpRsiPeriod, inpLevel4, i, rates_total, 3); // Dot
       val5[i] = rsiBand(price, inpRsiPeriod, inpLevel5, i, rates_total, 4); // Solid
+
+      double currentVal3 = rsiBand(price, inpRsiPeriod, inpLevel3, i, rates_total, 2);
+      double prevVal3 = rsiBand(getPrice(inpPrice, open, close, high, low, i - 1, rates_total), inpRsiPeriod, inpLevel3, i - 1, rates_total, 2);
+
+      if (currentVal3 > prevVal3)
+      {
+         val3[i] = currentVal3;
+         val6[i] = EMPTY_VALUE;
+      }
+      else if (currentVal3 < prevVal3)
+      {
+         val3[i] = EMPTY_VALUE;
+         val6[i] = currentVal3;
+      }
+      else
+      {
+         if (i > 0)
+         {
+            if(val3[i-1] != EMPTY_VALUE) val3[i] = currentVal3; else val3[i] = EMPTY_VALUE;
+            if(val6[i-1] != EMPTY_VALUE) val6[i] = currentVal3; else val6[i] = EMPTY_VALUE;
+         }
+      }
    }
    return (i);
   }
