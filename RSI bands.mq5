@@ -3,46 +3,54 @@
 #property link        "mladenfx@gmail.com"
 #property description "RSI bands"
 //+------------------------------------------------------------------
-#property indicator_chart_window
 #property indicator_buffers 5
 #property indicator_plots   5
-#property indicator_label1  "Dampening overbought"
+
+#property indicator_label1  "Level 1"
 #property indicator_type1   DRAW_LINE
-#property indicator_color1  clrLimeGreen
-#property indicator_style1  STYLE_DOT
-#property indicator_label2  "Dampening oversold"
+#property indicator_color1  clrDarkGreen
+#property indicator_style1  STYLE_SOLID  // Solid
+
+#property indicator_label2  "Level 2"
 #property indicator_type2   DRAW_LINE
-#property indicator_color2  clrOrangeRed
-#property indicator_style2  STYLE_DOT
-#property indicator_label3  "Overbought"
+#property indicator_color2  clrDarkGreen
+#property indicator_style2  STYLE_DOT    // Dotted
+
+#property indicator_label3  "Level 3"
 #property indicator_type3   DRAW_LINE
-#property indicator_color3  clrLimeGreen
-#property indicator_label4  "Oversold"
+#property indicator_color3  clrAqua
+#property indicator_style3  STYLE_DOT    // Dotted
+
+#property indicator_label4  "Level 4"
 #property indicator_type4   DRAW_LINE
-#property indicator_color4  clrOrangeRed
-#property indicator_label5  "Mid band (RSI 50)"
+#property indicator_color4  clrMaroon
+#property indicator_style4  STYLE_DOT    // Dotted
+
+#property indicator_label5  "Level 5"
 #property indicator_type5   DRAW_LINE
-#property indicator_color5  clrGold
-#property indicator_style5  STYLE_DOT
+#property indicator_color5  clrMaroon
+#property indicator_style5  STYLE_SOLID  // Solid
 //--- input parameters
 input int                inpRsiPeriod   = 14;          // RSI period
-input double             inpDampening   = 0.5;         // Dampening
 input ENUM_APPLIED_PRICE inpPrice       = PRICE_CLOSE; // Price
-input double             inpOverbought  = 70;          // Overbought level
-input double             inpOversold    = 30;          // Oversold level
+input double inpLevel1 = 70;   // Topmost (solid)
+input double inpLevel2 = 60;   // Dotted
+input double inpLevel3 = 50;   // Mid (dotted)
+input double inpLevel4 = 40;   // Dotted
+input double inpLevel5 = 30;   // Bottom (solid)
 //--- buffers declarations
-double valud[],valdd[],valu[],vald[],valmid[];
+double val1[], val2[], val3[], val4[], val5[];
 //+------------------------------------------------------------------+
 //| Custom indicator initialization function                         |
 //+------------------------------------------------------------------+
 int OnInit()
   {
 //--- indicator buffers mapping
-   SetIndexBuffer(0,valud,INDICATOR_DATA);
-   SetIndexBuffer(1,valdd,INDICATOR_DATA);
-   SetIndexBuffer(2,valu,INDICATOR_DATA);
-   SetIndexBuffer(3,vald,INDICATOR_DATA);
-   SetIndexBuffer(4,valmid,INDICATOR_DATA);
+   SetIndexBuffer(0, val1, INDICATOR_DATA); // Level 1
+   SetIndexBuffer(1, val2, INDICATOR_DATA); // Level 2
+   SetIndexBuffer(2, val3, INDICATOR_DATA); // Level 3
+   SetIndexBuffer(3, val4, INDICATOR_DATA); // Level 4
+   SetIndexBuffer(4, val5, INDICATOR_DATA); // Level 5
 //---
    IndicatorSetString(INDICATOR_SHORTNAME,"RSI bands("+(string)inpRsiPeriod+")");
 //---
@@ -67,15 +75,16 @@ int OnCalculate(const int rates_total,const int prev_calculated,const datetime &
                 const int &spread[])
   {
    if(Bars(_Symbol,_Period)<rates_total) return(prev_calculated);
-   int i=(int)MathMax(prev_calculated-1,1); for(; i<rates_total && !_StopFlag; i++)
-     {
-      double price=getPrice(inpPrice,open,close,high,low,i,rates_total);
-      valu[i]  = rsiBand(price,inpRsiPeriod,inpOverbought,i,0,rates_total,0);
-      vald[i]  = rsiBand(price,inpRsiPeriod,inpOversold  ,i,0,rates_total,1);
-      valud[i] = (inpDampening!=0) ? rsiBand(price,inpRsiPeriod,inpOverbought,i,inpDampening,rates_total,2) : EMPTY_VALUE;
-      valdd[i] = (inpDampening!=0) ? rsiBand(price,inpRsiPeriod,inpOversold  ,i,inpDampening,rates_total,3) : EMPTY_VALUE;
-      valmid[i] = rsiBand(price,inpRsiPeriod,50,i,0,rates_total,4);
-     }
+   int i = (int)MathMax(prev_calculated - 1, 1);
+   for (; i < rates_total && !_StopFlag; i++)
+   {
+      double price = getPrice(inpPrice, open, close, high, low, i, rates_total);
+      val1[i] = rsiBand(price, inpRsiPeriod, inpLevel1, i, rates_total, 0); // Solid
+      val2[i] = rsiBand(price, inpRsiPeriod, inpLevel2, i, rates_total, 1); // Dot
+      val3[i] = rsiBand(price, inpRsiPeriod, inpLevel3, i, rates_total, 2); // Dot
+      val4[i] = rsiBand(price, inpRsiPeriod, inpLevel4, i, rates_total, 3); // Dot
+      val5[i] = rsiBand(price, inpRsiPeriod, inpLevel5, i, rates_total, 4); // Solid
+   }
    return (i);
   }
 //+------------------------------------------------------------------+
@@ -91,7 +100,7 @@ double rsiBandWork[][_rsiBandInstances*_rsiBandInstanceSize];
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
-double rsiBand(double price,int rsiPeriod,double targetLevel,int i,double dampening,int bars,int instance=0)
+double rsiBand(double price,int rsiPeriod,double targetLevel,int i,int bars,int instance=0)
   {
    if(ArrayRange(rsiBandWork,0)!=bars) ArrayResize(rsiBandWork,bars); instance*=_rsiBandInstanceSize;
 
@@ -109,9 +118,6 @@ double rsiBand(double price,int rsiPeriod,double targetLevel,int i,double dampen
    if(prev>pprice)
       match=pprice+p-p*rsiPeriod -((n*rsiPeriod)-n)*targetLevel/(targetLevel-100.00);
    else  match=pprice-n-p+n*rsiPeriod+p*rsiPeriod+(100.00*p)/targetLevel -(100.00*p*rsiPeriod)/targetLevel;
-   if(dampening!=0)
-      if((match-cprice)>(dampening/100*cprice)) match=cprice *(1+dampening/100);
-   else if((match-cprice)<(-dampening/100*cprice)) match=cprice *(1-dampening/100);
 
    rsiBandWork[i][instance+_rsibPa]    = ((rsiPeriod-1)*p+w)/rsiPeriod;
    rsiBandWork[i][instance+_rsibNa]    = ((rsiPeriod-1)*n+s)/rsiPeriod;
