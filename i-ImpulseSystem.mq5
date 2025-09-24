@@ -11,7 +11,8 @@
 #property indicator_chart_window
 #property indicator_buffers 7
 #property indicator_plots 1
-#property indicator_type1   DRAW_COLOR_CANDLES
+#property indicator_type1   DRAW_COLOR_BARS
+//#property indicator_type1   DRAW_COLOR_CANDLES
 #property indicator_color1  Lime,Red,Gray
 #property indicator_width1  1
 #property indicator_label1  "Open;High;Low;Close"
@@ -31,10 +32,6 @@ int    hEMABuffer;
 //+------------------------------------------------------------------+
 int OnInit()
   {
-   if(ChartGetInteger(0,CHART_MODE)!=CHART_CANDLES)
-     {
-      Print("It's better to set candstick mode on the chart.");
-     }
 //--- indicator buffers mapping
    SetIndexBuffer(0,OBuffer,INDICATOR_DATA);
    SetIndexBuffer(1,HBuffer,INDICATOR_DATA);
