@@ -39,6 +39,7 @@ CPositionInfo position;
 
 string prefix = "FutureDash_";
 double dailyPL = 0;
+double dailyStartingBalance = 0;
 datetime resetTime;
 
 string buyBtn = prefix + "BUY";
@@ -80,6 +81,7 @@ int OnInit()
     trade.SetDeviationInPoints(Slippage);
     resetTime = TimeCurrent();
     dailyPL = GetDailyPL();
+    dailyStartingBalance = AccountInfoDouble(ACCOUNT_BALANCE) - dailyPL;
     
     // --- TP/SL UI Init ---
     tpLabel = prefix + "TP_LABEL";
@@ -721,7 +723,9 @@ void UpdateDashboard()
     ObjectSetInteger(0, spreadLbl, OBJPROP_COLOR, spreadColor);
     
     dailyPL = GetDailyPL();
-    ObjectSetString(0, plLbl, OBJPROP_TEXT, StringFormat("DAILY P&L: $%.2f", dailyPL));
+    double plPercent = (dailyStartingBalance > 0) ? (dailyPL / dailyStartingBalance) * 100 : 0;
+    string plText = StringFormat("DAILY P&L: $%.2f (%.2f%%)", dailyPL, plPercent);
+    ObjectSetString(0, plLbl, OBJPROP_TEXT, plText);
     ObjectSetInteger(0, plLbl, OBJPROP_COLOR, dailyPL >= 0 ? C'50,205,50' : C'255,69,0');
     
     string status = "READY";
@@ -817,6 +821,7 @@ void CheckDailyReset()
     
     if(currentDate > lastDate)
     {
+        dailyStartingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
         resetTime = current;
         Print("Daily reset");
     }
