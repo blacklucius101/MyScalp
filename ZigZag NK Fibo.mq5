@@ -140,6 +140,52 @@ void CreateFibo(long     chart_id, // chart ID
 //----
   }
 //+------------------------------------------------------------------+
+//| Create Text                                                      |
+//+------------------------------------------------------------------+
+void CreateText(long     chart_id, // chart ID
+                string   name,     // object name
+                int      nwin,     // window index
+                datetime time1,    // price level time 1
+                double   price1,   // price level 1
+                color    Color,    // text color
+                string   text,     // text
+                int      anchor)   // anchor
+  {
+//----
+   ObjectCreate(chart_id,name,OBJ_TEXT,nwin,time1,price1);
+   ObjectSetInteger(chart_id,name,OBJPROP_COLOR,Color);
+   ObjectSetString(chart_id,name,OBJPROP_TEXT,text);
+   ObjectSetInteger(chart_id,name,OBJPROP_ANCHOR,anchor);
+   ObjectSetInteger(chart_id,name,OBJPROP_FONTSIZE,10);
+//----
+  }
+//+------------------------------------------------------------------+
+//| Text reinstallation                                              |
+//+------------------------------------------------------------------+
+void SetText(long     chart_id, // chart ID
+             string   name,     // object name
+             int      nwin,     // window index
+             datetime time1,    // price level time 1
+             double   price1,   // price level 1
+             color    Color,    // text color
+             string   text,     // text
+             int      anchor)   // anchor
+  {
+//----
+   if(ObjectFind(chart_id,name)==-1)
+     {
+      CreateText(chart_id,name,nwin,time1,price1,Color,text,anchor);
+     }
+   else
+     {
+      ObjectMove(chart_id,name,0,time1,price1);
+      ObjectSetString(chart_id,name,OBJPROP_TEXT,text);
+      ObjectSetInteger(chart_id,name,OBJPROP_COLOR,Color);
+      ObjectSetInteger(chart_id,name,OBJPROP_ANCHOR,anchor);
+     }
+//----
+  }
+//+------------------------------------------------------------------+
 //|  Fibo reinstallation                                             |
 //+------------------------------------------------------------------+
 void SetFibo(long     chart_id, // chart ID
@@ -271,6 +317,7 @@ void OnDeinit(const int reason)
 //----
    ObjectDelete(0,"DynamicFibo");
    ObjectDelete(0,"StaticFibo");
+   ObjectDelete(0,"StaticFibo_Points");
 //----
   }
 //+------------------------------------------------------------------+ 
@@ -474,17 +521,53 @@ int OnCalculate(const int rates_total,
          SetFibo(0,"DynamicFibo",0,time[bar2],price2,time[bar1],price1,
                  DynamicFibo_color,DynamicFibo_style,DynamicFibo_width,DynamicFibo_AsRay,"DynamicFibo");
         }
+      else
+        {
+         ObjectDelete(0,"DynamicFibo");
+        }
 
       if(StaticFiboFlag)
         {
          bar3=FindSecondExtremum(sign,bar2,rates_total,HighestBuffer,LowestBuffer,sign,price3);
          SetFibo(0,"StaticFibo",0,time[bar3],price3,time[bar2],price2,
                  StaticFibo_color,StaticFibo_style,StaticFibo_width,StaticFibo_AsRay,"StaticFibo");
+
+         if(bar3 != -1 && bar2 != -1)
+           {
+            double points_val = MathAbs(price2 - price3) / _Point;
+            string points_text = IntegerToString((int)points_val);
+            datetime text_time = time[bar2];
+            double text_price = price2;
+            int anchor;
+
+            if(price2 > price3) // Bullish line
+              {
+               anchor = ANCHOR_BOTTOM;
+              }
+            else // Bearish line
+              {
+               anchor = ANCHOR_TOP;
+              }
+            SetText(0, "StaticFibo_Points", 0, text_time, text_price, clrWhite, points_text, anchor);
+           }
+        }
+      else
+        {
+         ObjectDelete(0,"StaticFibo");
+         ObjectDelete(0,"StaticFibo_Points");
         }
 
+      ChartRedraw(0);
+     }
+   else
+     {
+      ObjectDelete(0,"DynamicFibo");
+      ObjectDelete(0,"StaticFibo");
+      ObjectDelete(0,"StaticFibo_Points");
       ChartRedraw(0);
      }
 //----     
    return(rates_total);
   }
 //+------------------------------------------------------------------+
+
