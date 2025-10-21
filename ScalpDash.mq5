@@ -18,6 +18,7 @@ input bool     EnableHotkeys = true;
 input string   BuyKey = "1";
 input string   SellKey = "3"; 
 input string   CloseKey = "2";
+input string   BreakevenKey = "b";
 input string   MinimizeKey = "m";
 input string   ExitKey = "x";
 
@@ -242,6 +243,10 @@ void OnChartEvent(const int id, const long& lparam, const double& dparam, const 
                 MaximizeDashboard();
             else
                 MinimizeDashboard();
+        }
+        else if(StringCompare(key, BreakevenKey, false) == 0)
+        {
+            ExecuteBreakeven();
         }
         else if(StringCompare(key, ExitKey, false) == 0)
         {
@@ -625,6 +630,98 @@ void ExecuteSell()
     {
         Print("Error code: ", trade.ResultRetcode());
         SetStatus("SELL FAILED", C'255,69,0');
+    }
+}
+
+void ExecuteBreakeven()
+{
+    int totalPositions = PositionsTotal();
+    int positionsModified = 0;
+
+    for (int i = totalPositions - 1; i >= 0; i--)
+    {
+        if (position.SelectByIndex(i) && position.Symbol() == _Symbol && position.Magic() == 888888)
+        {
+            double entryPrice = position.PriceOpen();
+            double currentProfit = position.Profit();
+            double currentSL = position.StopLoss();
+            double currentTP = position.TakeProfit();
+            ulong ticket = position.Ticket();
+            
+            double newSL = currentSL;
+            double newTP = currentTP;
+
+            if (currentProfit > 0)
+            {
+                // In profit: move SL to lock profit
+                if (position.PositionType() == POSITION_TYPE_BUY)
+                {
+                    newSL = entryPrice + 1000 * _Point;
+                    if(newSL >= SymbolInfoDouble(_Symbol, SYMBOL_BID))
+                    {
+                        Print("Breakeven for BUY #", ticket, ": Price has not moved enough to lock 1000 points profit. Current Bid: ", SymbolInfoDouble(_Symbol, SYMBOL_BID), ", Required SL: ", newSL);
+                        continue;
+                    }
+                }
+                else // POSITION_TYPE_SELL
+                {
+                    newSL = entryPrice - 1000 * _Point;
+                     if(newSL <= SymbolInfoDouble(_Symbol, SYMBOL_ASK))
+                    {
+                        Print("Breakeven for SELL #", ticket, ": Price has not moved enough to lock 1000 points profit. Current Ask: ", SymbolInfoDouble(_Symbol, SYMBOL_ASK), ", Required SL: ", newSL);
+                        continue;
+                    }
+                }
+                Print("Breakeven: Modifying profitable position #", ticket, " New SL: ", DoubleToString(newSL, _Digits));
+            }
+            else if (currentProfit < 0)
+            {
+                // In loss: set a closer TP
+                if (position.PositionType() == POSITION_TYPE_BUY)
+                {
+                    newTP = entryPrice + 1000 * _Point;
+                    if(newTP <= SymbolInfoDouble(_Symbol, SYMBOL_ASK))
+                    {
+                         Print("Breakeven for BUY #", ticket, ": New TP is below or at current Ask price. Current Ask: ", SymbolInfoDouble(_Symbol, SYMBOL_ASK), ", Required TP: ", newTP);
+                         continue;
+                    }
+                }
+                else // POSITION_TYPE_SELL
+                {
+                    newTP = entryPrice - 1000 * _Point;
+                    if(newTP >= SymbolInfoDouble(_Symbol, SYMBOL_BID))
+                    {
+                         Print("Breakeven for SELL #", ticket, ": New TP is above or at current Bid price. Current Bid: ", SymbolInfoDouble(_Symbol, SYMBOL_BID), ", Required TP: ", newTP);
+                         continue;
+                    }
+                }
+                Print("Breakeven: Modifying losing position #", ticket, " New TP: ", DoubleToString(newTP, _Digits));
+            }
+            else
+            {
+                continue; // At breakeven, do nothing
+            }
+
+            if (trade.PositionModify(ticket, newSL, newTP))
+            {
+                positionsModified++;
+            }
+            else
+            {
+                Print("Failed to modify position #", ticket, ". Error: ", trade.ResultRetcodeDescription());
+            }
+        }
+    }
+
+    if (positionsModified > 0)
+    {
+        SetStatus("BREAKEVEN APPLIED", C'0,255,255');
+        PlaySound("ok.wav");
+    }
+    else
+    {
+        SetStatus("NO ACTION TAKEN", C'255,215,0');
+        Print("Breakeven executed, but no positions were modified.");
     }
 }
 
